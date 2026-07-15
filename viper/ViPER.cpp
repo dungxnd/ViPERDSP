@@ -708,21 +708,34 @@ void ViPER::DispatchRawParam(
             dynamic_system_.SetEnable(val1 != 0);
             break;
         }
-        case kParamDynamicSystemXCoefficients: {
-            VIPER_LOGI("DynSys: x_coeffs=%d,%d", val1, val2);
-            dynamic_system_.SetXCoeffs(val1, val2);
+        case kParamDynamicSystemXLow: {
+            VIPER_LOGI("DynSys: x_low=%d", val1);
+            dynamic_system_.SetXCoeffs(val1, -1);
             break;
         }
-        case kParamDynamicSystemYCoefficients: {
-            VIPER_LOGI("DynSys: y_coeffs=%d,%d", val1, val2);
-            dynamic_system_.SetYCoeffs(val1, val2);
+        case kParamDynamicSystemXHigh: {
+            VIPER_LOGI("DynSys: x_high=%d", val1);
+            dynamic_system_.SetXCoeffs(-1, val1);
             break;
         }
-        case kParamDynamicSystemSideGain: {
-            VIPER_LOGI("DynSys: side_gain=%d,%d", val1, val2);
-            dynamic_system_.SetSideGain(
-                static_cast<float>(val1) / 100.0f, static_cast<float>(val2) / 100.0f
-            );
+        case kParamDynamicSystemYLow: {
+            VIPER_LOGI("DynSys: y_low=%d", val1);
+            dynamic_system_.SetYCoeffs(val1, -1);
+            break;
+        }
+        case kParamDynamicSystemYHigh: {
+            VIPER_LOGI("DynSys: y_high=%d", val1);
+            dynamic_system_.SetYCoeffs(-1, val1);
+            break;
+        }
+        case kParamDynamicSystemSideGainLow: {
+            VIPER_LOGI("DynSys: side_gain_low=%d", val1);
+            dynamic_system_.SetSideGain(static_cast<float>(val1) / 100.0f, -1.0f);
+            break;
+        }
+        case kParamDynamicSystemSideGainHigh: {
+            VIPER_LOGI("DynSys: side_gain_high=%d", val1);
+            dynamic_system_.SetSideGain(-1.0f, static_cast<float>(val1) / 100.0f);
             break;
         }
         case kParamDynamicSystemStrength: {

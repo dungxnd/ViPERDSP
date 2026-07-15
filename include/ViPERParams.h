@@ -113,10 +113,13 @@ constexpr int kParamReverbWet = 0x10214;
 constexpr int kParamReverbDry = 0x10215;
 
 constexpr int kParamDynamicSystemEnable = 0x10220;
-constexpr int kParamDynamicSystemXCoefficients = 0x10221;
-constexpr int kParamDynamicSystemYCoefficients = 0x10222;
-constexpr int kParamDynamicSystemSideGain = 0x10223;
-constexpr int kParamDynamicSystemStrength = 0x10224;
+constexpr int kParamDynamicSystemXLow = 0x10221;
+constexpr int kParamDynamicSystemXHigh = 0x10222;
+constexpr int kParamDynamicSystemYLow = 0x10223;
+constexpr int kParamDynamicSystemYHigh = 0x10224;
+constexpr int kParamDynamicSystemSideGainLow = 0x10225;
+constexpr int kParamDynamicSystemSideGainHigh = 0x10226;
+constexpr int kParamDynamicSystemStrength = 0x10227;
 
 constexpr int kParamClarityEnable = 0x10230;
 constexpr int kParamClarityMode = 0x10231;

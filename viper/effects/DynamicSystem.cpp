@@ -39,14 +39,20 @@ void DynamicSystem::SetSamplingRate(const uint32_t sampling_rate) {
     }
 }
 
-void DynamicSystem::SetSideGain(const float gain_x, const float gain_y) {
-    dynamic_bass_.SetSideGain(gain_x, gain_y);
+void DynamicSystem::SetSideGain(const float gain_low, const float gain_high) {
+    if (gain_low >= 0.0f) side_gain_low_ = gain_low;
+    if (gain_high >= 0.0f) side_gain_high_ = gain_high;
+    dynamic_bass_.SetSideGain(side_gain_low_, side_gain_high_);
 }
 
-void DynamicSystem::SetXCoeffs(const uint32_t low, const uint32_t high) {
-    dynamic_bass_.SetFilterXPassFrequency(low, high);
+void DynamicSystem::SetXCoeffs(const int low, const int high) {
+    if (low >= 0) x_low_ = low;
+    if (high >= 0) x_high_ = high;
+    dynamic_bass_.SetFilterXPassFrequency(x_low_, x_high_);
 }
 
-void DynamicSystem::SetYCoeffs(const uint32_t low, const uint32_t high) {
-    dynamic_bass_.SetFilterYPassFrequency(low, high);
+void DynamicSystem::SetYCoeffs(const int low, const int high) {
+    if (low >= 0) y_low_ = low;
+    if (high >= 0) y_high_ = high;
+    dynamic_bass_.SetFilterYPassFrequency(y_low_, y_high_);
 }
