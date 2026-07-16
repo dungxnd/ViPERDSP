@@ -73,6 +73,7 @@ constexpr int kParamSpectrumExtensionExciter = 0x10192;
 constexpr int kParamEqualizerEnable = 0x101A0;
 constexpr int kParamEqualizerBandLevel = 0x101A1;
 constexpr int kParamEqualizerBandCount = 0x101A2;
+constexpr int kParamEqualizerBandLevels = 0x101A3;
 
 constexpr int kParamConvolverEnable = 0x101B0;
 constexpr int kParamConvolverSetKernel = 0x101B1;

@@ -91,6 +91,13 @@ void IIRFilter::SetBandLevel(const uint32_t band, const float level) {
     band_levels_with_q_[band] = static_cast<float>(band_level * 0.636);
 }
 
+void IIRFilter::SetBandLevels(const float *levels, const uint32_t count) {
+    const uint32_t n = count > 31 ? 31 : count;
+    for (uint32_t i = 0; i < n; i++) {
+        SetBandLevel(i, levels[i]);
+    }
+}
+
 void IIRFilter::SetSamplingRate(const uint32_t sampling_rate) {
     if (sampling_rate_ != sampling_rate) {
         sampling_rate_ = sampling_rate;

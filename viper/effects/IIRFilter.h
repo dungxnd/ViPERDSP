@@ -13,6 +13,7 @@ public:
     void SetEnable(bool enable);
     void SetBandCount(uint32_t bands);
     void SetBandLevel(uint32_t band, float level);
+    void SetBandLevels(const float *levels, uint32_t count);
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
