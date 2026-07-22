@@ -537,7 +537,7 @@ struct DynamicEqBandParams {
 struct DynamicEqParams {
     bool enable = false;
     uint32_t band_count = 0;
-    std::array<DynamicEqBandParams, 8> bands{};
+    std::array<DynamicEqBandParams, 10> bands{};
 
     bool operator==(const DynamicEqParams &other) const {
         if (!enable && !other.enable) return true;

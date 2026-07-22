@@ -5,7 +5,7 @@
 
 class DynamicEQ {
 public:
-    static constexpr uint32_t kMaxBands = 8;
+    static constexpr uint32_t kMaxBands = 10;
 
     DynamicEQ();
 
