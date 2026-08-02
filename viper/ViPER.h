@@ -1,5 +1,10 @@
 #pragma once
 
+#include <array>
+#include <atomic>
+#include <optional>
+#include <vector>
+
 #include "ViPERParams.h"
 #include "effects/AnalogX.h"
 #include "effects/ColorfulMusic.h"
@@ -27,7 +32,6 @@
 #include "effects/ViPERDDC.h"
 #include "utils/AdaptiveBuffer.h"
 #include "utils/WaveBuffer.h"
-#include <array>
 
 class ViPER {
 public:
