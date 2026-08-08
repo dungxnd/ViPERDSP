@@ -12,6 +12,9 @@ ViPERBass::ViPERBass() :
     bass_factor_(0.0f),
     bass_factor_smoothed_(0.0f),
     smoothing_coeff_(0.0f),
+    dc_block_coeff_(0.0f),
+    dc_x1_{0.0f, 0.0f},
+    dc_y1_{0.0f, 0.0f},
     polyphase_(2),
     wave_buffer_(2, 4096) {
     for (auto &biquad : biquad_) {
@@ -26,18 +29,26 @@ void ViPERBass::Process(float *samples, const uint32_t size) {
     if (!enable_) return;
     if (size == 0) return;
 
-    constexpr float KNEE = 0.5f;
-    auto sat_mix = [](float &l, float &r) {
-        const float a_l = std::fabs(l);
-        const float a_r = std::fabs(r);
-        const float drive = a_l > a_r ? a_l : a_r;
-        if (drive <= KNEE) return;
+    auto soft_clip = [](const float v, const float knee) {
+        const float drive = std::fabs(v);
+        if (drive <= knee) return v;
+        const float over = drive - knee;
+        const float shaped = knee + over / std::sqrt(1.0f + over * over);
+        return v * (shaped / drive);
+    };
 
-        const float over = drive - KNEE;
-        const float shaped = KNEE + over / std::sqrt(1.0f + over * over);
-        const float scale = shaped / drive;
-        l *= scale;
-        r *= scale;
+    auto dc_block = [this](const float x, const int ch) {
+        const float y = dc_block_coeff_ * (dc_y1_[ch] + x - dc_x1_[ch]);
+        dc_x1_[ch] = x;
+        dc_y1_[ch] = y;
+        return y;
+    };
+
+    auto shape_mix = [&](float bass_l, float bass_r, const uint32_t i) {
+        bass_l = soft_clip(dc_block(bass_l, 0), 0.8f);
+        bass_r = soft_clip(dc_block(bass_r, 1), 0.8f);
+        samples[i] = soft_clip(samples[i] + bass_l, 0.95f);
+        samples[i + 1] = soft_clip(samples[i + 1] + bass_r, 0.95f);
     };
 
     switch (process_mode_) {
@@ -57,11 +68,7 @@ void ViPERBass::Process(float *samples, const uint32_t size) {
                     if (x > 1.0f) x = 1.0f;
                     anti_pop_ = x;
                 }
-                float mixed_l = samples[i] + bass_l;
-                float mixed_r = samples[i + 1] + bass_r;
-                sat_mix(mixed_l, mixed_r);
-                samples[i] = mixed_l;
-                samples[i + 1] = mixed_r;
+                shape_mix(bass_l, bass_r, i);
             }
             break;
         }
@@ -90,11 +97,7 @@ void ViPERBass::Process(float *samples, const uint32_t size) {
                             if (x > 1.0f) x = 1.0f;
                             anti_pop_ = x;
                         }
-                        float mixed_l = samples[i] + bass_l;
-                        float mixed_r = samples[i + 1] + bass_r;
-                        sat_mix(mixed_l, mixed_r);
-                        samples[i] = mixed_l;
-                        samples[i + 1] = mixed_r;
+                        shape_mix(bass_l, bass_r, i);
                     }
                     wave_buffer_.PopSamples(size, true);
                 }
@@ -135,6 +138,11 @@ void ViPERBass::Reset() {
     smoothing_coeff_ =
         1.0f - std::exp(-1.0f / (0.030f * static_cast<float>(sampling_rate_)));
     bass_factor_smoothed_ = bass_factor_;
+    dc_block_coeff_ =
+        std::exp(-2.0f * static_cast<float>(M_PI) * 18.0f
+                 / static_cast<float>(sampling_rate_));
+    dc_x1_[0] = dc_x1_[1] = 0.0f;
+    dc_y1_[0] = dc_y1_[1] = 0.0f;
 }
 
 void ViPERBass::SetEnable(const bool enable) {

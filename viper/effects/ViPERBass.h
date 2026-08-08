@@ -39,6 +39,10 @@ private:
     float bass_factor_smoothed_;
     float smoothing_coeff_;
 
+    float dc_block_coeff_;
+    float dc_x1_[2];
+    float dc_y1_[2];
+
     Polyphase polyphase_;
     Biquad biquad_[2];
     Subwoofer subwoofer_;
