@@ -108,6 +108,7 @@ ViPER::ViPER() :
     cure_.Reset();
 
     tube_simulator_.SetEnable(false);
+    tube_simulator_.SetSamplingRate(sampling_rate_);
     tube_simulator_.Reset();
 
     analog_x_.SetEnable(false);
@@ -1036,6 +1037,7 @@ void ViPER::ResetAllEffects() {
     cure_.SetSamplingRate(sampling_rate_);
     cure_.Reset();
 
+    tube_simulator_.SetSamplingRate(sampling_rate_);
     tube_simulator_.Reset();
 
     analog_x_.SetSamplingRate(sampling_rate_);
