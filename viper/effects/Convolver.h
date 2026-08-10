@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../utils/PConvSingle.h"
-#include "../utils/WaveBuffer.h"
 
 class Convolver {
 public:
@@ -43,8 +42,6 @@ private:
 
     char kernel_file_path_[256];
     float *kernel_buffer_;
-    WaveBuffer *wave_buffer_l_;
-    WaveBuffer *wave_buffer_r_;
     PConvSingle kernel_ch1_;
     PConvSingle kernel_ch2_;
     PConvSingle kernel_ch3_;

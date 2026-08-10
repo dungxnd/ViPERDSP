@@ -2,6 +2,7 @@
 #include "../constants.h"
 #include "../utils/Crc32.h"
 #include "../utils/WavReader.h"
+#include <cstring>
 
 constexpr int kConvSegmentSize = 0x1000;
 
@@ -17,49 +18,46 @@ Convolver::Convolver() :
     current_kernel_buffer_crc_(0),
     cross_channel_(0.0f),
     kernel_file_path_{},
-    kernel_buffer_(nullptr),
-    wave_buffer_l_(new WaveBuffer(2, kConvSegmentSize)),
-    wave_buffer_r_(new WaveBuffer(2, kConvSegmentSize)) {
+    kernel_buffer_(nullptr) {
     memset(kernel_file_path_, 0, sizeof(kernel_file_path_));
 }
 
 Convolver::~Convolver() {
-    delete wave_buffer_l_;
-    delete wave_buffer_r_;
     delete[] kernel_buffer_;
 }
 
 uint32_t Convolver::Process(const float *source, float *dest, const uint32_t frame_size) {
-    if (enable_ && kernel_ch1_.InstanceUsable() && kernel_ch2_.InstanceUsable()
-        && wave_buffer_l_->PushSamples(source, frame_size) != 0) {
-        while (wave_buffer_l_->GetBufferOffset() >= kConvSegmentSize) {
-            float *buf_ptr = wave_buffer_l_->GetBuffer();
-            kernel_ch1_.ConvolveInterleaved(buf_ptr, 0);
-            kernel_ch2_.ConvolveInterleaved(buf_ptr, 1);
+    if (enable_ && kernel_ch1_.InstanceUsable() && kernel_ch2_.InstanceUsable()) {
+        constexpr uint32_t seg = kConvSegmentSize;
+        for (uint32_t off = 0; off < frame_size; off += seg) {
+            const uint32_t n = frame_size - off < seg ? frame_size - off : seg;
+
+            if (source != dest) {
+                memcpy(dest + off * 2, source + off * 2, n * 2 * sizeof(float));
+            }
+            float *buf_ptr = dest + off * 2;
+
+            kernel_ch1_.ConvolveInterleaved(buf_ptr, 0, n);
+            kernel_ch2_.ConvolveInterleaved(buf_ptr, 1, n);
 
             if (is_valid_cross_channel_) {
                 const float cc = cross_channel_;
-                for (size_t i = 0; i < kConvSegmentSize; i++) {
+                for (uint32_t i = 0; i < n; i++) {
                     const float L = buf_ptr[i * 2];
                     const float R = buf_ptr[i * 2 + 1];
                     buf_ptr[i * 2] = L + cc * (R - L);
                     buf_ptr[i * 2 + 1] = R + cc * (L - R);
                 }
             }
-
-            wave_buffer_r_->PushSamples(buf_ptr, kConvSegmentSize);
-            wave_buffer_l_->PopSamples(kConvSegmentSize, true);
         }
 
-        return wave_buffer_r_->PopSamples(dest, frame_size, false);
+        return frame_size;
     }
 
     return frame_size;
 }
 
 void Convolver::Reset() {
-    wave_buffer_l_->Reset();
-    wave_buffer_r_->Reset();
     kernel_ch1_.Reset();
     kernel_ch2_.Reset();
 }

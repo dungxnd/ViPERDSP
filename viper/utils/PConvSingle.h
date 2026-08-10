@@ -15,9 +15,9 @@ public:
     [[nodiscard]] uint32_t GetSegmentSize() const;
     [[nodiscard]] bool InstanceUsable() const;
 
-    void Convolve(float *buffer);
-    void ConvolveInterleaved(float *buffer, int channel);
-    void ConvSegment(float *buffer, bool interleaved, int channel);
+    void Convolve(float *buffer, uint32_t n);
+    void ConvolveInterleaved(float *buffer, int channel, uint32_t n);
+    void ConvSegment(float *buffer, bool interleaved, int channel, uint32_t n);
 
     uint32_t LoadKernel(const float *kernel, uint32_t kernel_size, uint32_t segment_size);
     uint32_t LoadKernel(
@@ -33,10 +33,13 @@ public:
 private:
     bool instance_usable_;
 
+    void ConvChunk(float *buffer, bool interleaved, int channel, uint32_t n);
+
     uint32_t segment_count_;
     uint32_t segment_size_;
     uint32_t fft_size_;
     uint32_t delay_line_index_;
+    uint32_t input_fill_;
 
     PFFFT_Setup *fft_setup_;
     float *fft_work_;

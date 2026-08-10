@@ -1,12 +1,10 @@
 #pragma once
 
 #include "../utils/PConvSingle.h"
-#include "../utils/WaveBuffer.h"
 
 class VHE {
 public:
     VHE();
-    ~VHE();
 
     uint32_t Process(const float *source, float *dest, uint32_t frame_size);
     void Reset();
@@ -26,6 +24,4 @@ private:
 
     PConvSingle conv_left_;
     PConvSingle conv_right_;
-    WaveBuffer *buf_a_;
-    WaveBuffer *buf_b_;
 };

@@ -9,6 +9,7 @@ PConvSingle::PConvSingle() :
     segment_size_(0),
     fft_size_(0),
     delay_line_index_(0),
+    input_fill_(0),
     fft_setup_(nullptr),
     fft_work_(nullptr),
     filter_segments_(nullptr),
@@ -34,6 +35,7 @@ void PConvSingle::Reset() {
     memset(mono_buffer_, 0, segment_size_ * sizeof(float));
     memset(fft_work_, 0, fft_size_ * sizeof(float));
     delay_line_index_ = 0;
+    input_fill_ = 0;
 }
 
 uint32_t PConvSingle::GetFFTSize() const {
@@ -52,35 +54,50 @@ bool PConvSingle::InstanceUsable() const {
     return instance_usable_;
 }
 
-void PConvSingle::Convolve(float *buffer) {
-    ConvSegment(buffer, false, 0);
+void PConvSingle::Convolve(float *buffer, const uint32_t n) {
+    ConvSegment(buffer, false, 0, n);
 }
 
-void PConvSingle::ConvolveInterleaved(float *buffer, const int channel) {
-    ConvSegment(buffer, true, channel);
+void PConvSingle::ConvolveInterleaved(float *buffer, const int channel, const uint32_t n) {
+    ConvSegment(buffer, true, channel, n);
 }
 
-void PConvSingle::ConvSegment(float *buffer, const bool interleaved, const int channel) {
-    if (!instance_usable_) return;
+void PConvSingle::ConvSegment(
+    float *buffer, const bool interleaved, const int channel, const uint32_t n
+) {
+    if (!instance_usable_ || n == 0) return;
 
-    float *input;
-    if (interleaved) {
-        for (int i = 0; i < segment_size_; i++) {
-            mono_buffer_[i] = buffer[i * 2 + channel];
-        }
-        input = mono_buffer_;
-    } else {
-        input = buffer;
+    // Split the request at segment boundaries so each chunk fits the partial
+    // block; handles n larger than a segment and non-aligned host block sizes.
+    const uint32_t stride = interleaved ? 2 : 1;
+    uint32_t done = 0;
+    while (done < n) {
+        const uint32_t room = segment_size_ - input_fill_;
+        const uint32_t chunk = n - done < room ? n - done : room;
+        ConvChunk(buffer + done * stride, interleaved, channel, chunk);
+        done += chunk;
+    }
+}
+
+void PConvSingle::ConvChunk(
+    float *buffer, const bool interleaved, const int channel, const uint32_t n
+) {
+    for (uint32_t i = 0; i < n; i++) {
+        mono_buffer_[input_fill_ + i] =
+            interleaved ? buffer[i * 2 + channel] : buffer[i];
     }
 
-    // Overlap-save: form [previous_overlap | current_input] in fft_buffer_
+    // Overlap-save with per-call emission. Forward transform lands in the current
+    // delay-line slot so the k=0 MAC term reads it; slot finalized on commit.
     memcpy(fft_buffer_, overlap_buffer_, segment_size_ * sizeof(float));
-    memcpy(fft_buffer_ + segment_size_, input, segment_size_ * sizeof(float));
+    const uint32_t filled = input_fill_ + n;
+    memcpy(fft_buffer_ + segment_size_, mono_buffer_, filled * sizeof(float));
+    memset(
+        fft_buffer_ + segment_size_ + filled,
+        0,
+        (segment_size_ - filled) * sizeof(float)
+    );
 
-    // Save current input as overlap for next call
-    memcpy(overlap_buffer_, input, segment_size_ * sizeof(float));
-
-    // Forward FFT the combined buffer into the current delay line slot
     pffft_transform(
         fft_setup_,
         fft_buffer_,
@@ -89,7 +106,6 @@ void PConvSingle::ConvSegment(float *buffer, const bool interleaved, const int c
         PFFFT_FORWARD
     );
 
-    // Frequency-domain multiply-accumulate across all kernel segments
     memset(accum_buffer_, 0, fft_size_ * sizeof(float));
     for (int k = 0; k < segment_count_; k++) {
         const uint32_t idx = (delay_line_index_ - k + segment_count_) % segment_count_;
@@ -98,28 +114,30 @@ void PConvSingle::ConvSegment(float *buffer, const bool interleaved, const int c
         );
     }
 
-    // Inverse FFT
     pffft_transform(fft_setup_, accum_buffer_, fft_buffer_, fft_work_, PFFFT_BACKWARD);
 
-    // Scale by 1/N (pffft does not normalize)
     const float scale = 1.0f / static_cast<float>(fft_size_);
-    for (int i = 0; i < fft_size_; i++) {
-        fft_buffer_[i] *= scale;
-    }
-
-    // Output the second half (valid overlap-save region)
-    const float *output = fft_buffer_ + segment_size_;
+    const float *output = fft_buffer_ + segment_size_ + input_fill_;
 
     if (interleaved) {
-        for (int i = 0; i < segment_size_; i++) {
-            buffer[i * 2 + channel] = output[i];
+        for (uint32_t i = 0; i < n; i++) {
+            buffer[i * 2 + channel] = output[i] * scale;
         }
     } else {
-        memcpy(buffer, output, segment_size_ * sizeof(float));
+        for (uint32_t i = 0; i < n; i++) {
+            buffer[i] = output[i] * scale;
+        }
     }
 
-    // Advance delay line ring buffer
-    delay_line_index_ = (delay_line_index_ + 1) % segment_count_;
+    input_fill_ = filled;
+
+    // Full segment buffered: save as next overlap and advance. The current slot
+    // already holds this block's spectrum from the forward transform above.
+    if (input_fill_ == segment_size_) {
+        memcpy(overlap_buffer_, mono_buffer_, segment_size_ * sizeof(float));
+        delay_line_index_ = (delay_line_index_ + 1) % segment_count_;
+        input_fill_ = 0;
+    }
 }
 
 uint32_t PConvSingle::LoadKernel(

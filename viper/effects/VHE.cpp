@@ -6,42 +6,36 @@
 #include "VHE_L2.h"
 #include "VHE_L3.h"
 #include "VHE_L4.h"
+#include <cstring>
 
 VHE::VHE() :
     enable_(false),
     sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE),
     effect_level_(0),
-    conv_size_(0),
-    buf_a_(new WaveBuffer(2, 0x1000)),
-    buf_b_(new WaveBuffer(2, 0x1000)) {
+    conv_size_(0) {
     Reset();
-}
-
-VHE::~VHE() {
-    delete buf_a_;
-    delete buf_b_;
 }
 
 uint32_t VHE::Process(const float *source, float *dest, const uint32_t frame_size) {
     if (enable_ && conv_left_.InstanceUsable() && conv_right_.InstanceUsable()) {
-        if (buf_a_->PushSamples(source, frame_size) != 0) {
-            while (buf_a_->GetBufferOffset() > conv_size_) {
-                float *buffer = buf_a_->GetBuffer();
-                conv_left_.ConvolveInterleaved(buffer, 0);
-                conv_right_.ConvolveInterleaved(buffer, 1);
-                buf_b_->PushSamples(buffer, conv_size_);
-                buf_a_->PopSamples(conv_size_, true);
+        for (uint32_t off = 0; off < frame_size; off += conv_size_) {
+            const uint32_t n =
+                frame_size - off < conv_size_ ? frame_size - off : conv_size_;
+
+            if (source != dest) {
+                memcpy(dest + off * 2, source + off * 2, n * 2 * sizeof(float));
             }
-            return buf_b_->PopSamples(dest, frame_size, false);
+            float *buffer = dest + off * 2;
+
+            conv_left_.ConvolveInterleaved(buffer, 0, n);
+            conv_right_.ConvolveInterleaved(buffer, 1, n);
         }
+        return frame_size;
     }
     return frame_size;
 }
 
 void VHE::Reset() {
-    buf_a_->Reset();
-    buf_b_->Reset();
-
     conv_left_.Reset();
     conv_left_.UnloadKernel();
     conv_right_.Reset();
