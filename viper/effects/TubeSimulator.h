@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../utils/Harmonic.h"
+#include "../utils/QuadricTube.h"
 #include "../utils/MultiBiquad.h"
 #include <array>
 
@@ -20,6 +20,6 @@ private:
     uint32_t sampling_rate_;
 
     std::array<MultiBiquad, 2> high_pass_;
-    std::array<Harmonic, 2> harmonic_;
+    std::array<QuadricTube, 2> tube_;
     std::array<MultiBiquad, 2> low_pass_;
 };

@@ -1,10 +1,6 @@
 #include "TubeSimulator.h"
 #include "../constants.h"
 
-static constexpr float kTubeHarmonics[] = {
-    0.5f, 0.3f, 0.12f, 0.05f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f
-};
-
 TubeSimulator::TubeSimulator() :
     enable_(false),
     sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE) {
@@ -17,13 +13,13 @@ void TubeSimulator::Process(float *buffer, const uint32_t size) {
     for (uint32_t i = 0; i < size; i++) {
         const double in_l = buffer[i * 2];
         double harm_l = high_pass_[0].ProcessSample(in_l);
-        harm_l = harmonic_[0].Process(harm_l);
+        harm_l = tube_[0].Process(harm_l);
         harm_l = low_pass_[0].ProcessSample(harm_l);
         buffer[i * 2] = static_cast<float>(in_l + harm_l);
 
         const double in_r = buffer[i * 2 + 1];
         double harm_r = high_pass_[1].ProcessSample(in_r);
-        harm_r = harmonic_[1].Process(harm_r);
+        harm_r = tube_[1].Process(harm_r);
         harm_r = low_pass_[1].ProcessSample(harm_r);
         buffer[i * 2 + 1] = static_cast<float>(in_r + harm_r);
     }
@@ -49,7 +45,7 @@ void TubeSimulator::Reset() {
             0.717f,
             false
         );
-        harmonic_[ch].SetHarmonics(kTubeHarmonics);
+        tube_[ch].Reset();
     }
 }
 
