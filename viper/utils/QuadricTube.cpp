@@ -1,20 +1,7 @@
 #include "QuadricTube.h"
 #include <cmath>
 
-// 12AX7 — high-gain dual triode (ECC83). Datasheet basis:
-//   Va=250V, Vg=-1.5V, Ia≈0.77mA → mu≈100, gm≈1.27mA/V, rp≈76kΩ
-static constexpr TubeModel TUBE_12AX7 = { 1.014e-5, 5.498e-8, 1.076e-5 };
-
-// 6N1J — Soviet medium-gain dual triode (military 6N1P variant). Datasheet basis:
-//   Va=100V, Vg=-1V, Ia=7.5mA → mu=35, gm=4.35mA/V, rp=8046Ω
-//   Fitted via QuadricTube closed-form: kp2=(gm/(2·mu·√Ia))², kpg=2·kp2·mu,
-//   kp solved from f0=√Ia at the operating point.
-//   Use: SetTubeModel(TUBE_6N1J, 250.0, 20000.0, -2.0)
-static constexpr TubeModel TUBE_6N1J  = { 5.7349e-5, 5.1490e-7, 3.6043e-5 };
-
-QuadricTube::QuadricTube() {
-    SetTubeModel(TUBE_12AX7, 250.0, 100000.0, -1.5);
-}
+QuadricTube::QuadricTube() = default;
 
 void QuadricTube::SetTubeModel(const TubeModel& model, double vdd, double rp, double bias) {
     tube_ = model;
@@ -40,15 +27,15 @@ void QuadricTube::SetTubeModel(const TubeModel& model, double vdd, double rp, do
 
 double QuadricTube::Process(const double sample) {
     const double prev_last = last_processed_;
-    const double v_gk = (sample * 2.0) + bias_;
+    const double v_gk = (sample * drive_factor_) + bias_;
 
     const double B = k_B_const_ + (k_B_vgk_ * v_gk);
     const double C = (k_C_vgk2_ * v_gk * v_gk) + (k_C_vgk_ * v_gk) + k_C_const_;
 
     const double discriminant = (B * B) - (k_4A_ * C);
     double i_p = 0.0;
-    
-    if (discriminant >= 0.0) {
+
+    if (discriminant >= -1e-12) {
         i_p = (-B - std::sqrt(discriminant)) / k_2A_;
         if (i_p < 0.0) i_p = 0.0;
     }
@@ -62,6 +49,12 @@ double QuadricTube::Process(const double sample) {
     prev_out_ = last_processed_ + prev_out_ * 0.999 - prev_last;
 
     return prev_out_;
+}
+
+void QuadricTube::SetDrive(double drive) {
+    if (drive < 1.0)  drive = 1.0;
+    if (drive > 10.0) drive = 10.0;
+    drive_factor_ = drive;
 }
 
 void QuadricTube::Reset() {

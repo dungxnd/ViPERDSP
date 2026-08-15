@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 
 #ifndef VERSION_CODE
 #define VERSION_CODE 00000000
@@ -131,6 +132,8 @@ constexpr int kParamCureCrossfeedPreset = 0x10241;
 
 constexpr int kParamTubeSimulatorEnable = 0x10250;
 constexpr int kParamTubeSimulatorModel  = 0x10251;
+constexpr int kParamTubeSimulatorDrive  = 0x10252;
+constexpr int kParamTubeSimulatorMix    = 0x10253;
 
 constexpr int kParamAnalogXEnable = 0x10260;
 constexpr int kParamAnalogXMode = 0x10261;
@@ -445,12 +448,18 @@ struct CureParams {
 };
 
 struct TubeSimulatorParams {
-    bool enable = false;
-    int  model  = 0;  // 0 = 12AX7, 1 = 6N1J
+    bool  enable = false;
+    int   model  = 0;    // 0 = 12AX7, 1 = 6N1J
+    float drive  = 2.0f; // Input gain [1.0 – 10.0]
+    float mix    = 0.3f; // Wet/dry ratio [0.0 – 1.0]
 
     bool operator==(const TubeSimulatorParams &other) const {
         if (!enable && !other.enable) return true;
-        return enable == other.enable && model == other.model;
+        constexpr float kEps = 1e-4f;
+        return enable == other.enable
+            && model == other.model
+            && std::abs(drive - other.drive) < kEps
+            && std::abs(mix   - other.mix)   < kEps;
     }
 };
 

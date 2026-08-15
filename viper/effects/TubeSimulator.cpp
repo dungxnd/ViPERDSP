@@ -30,17 +30,13 @@ void TubeSimulator::Process(float *buffer, const uint32_t size) {
         double harm_l = high_pass_[0].ProcessSample(in_l);
         harm_l = tube_[0].Process(harm_l);
         harm_l = low_pass_[0].ProcessSample(harm_l);
-        // Wet/dry mix: preserves original level, blends in tube harmonic colour.
-        // kTubeMix = 0.3 adds ~+0.34 dB and 10.2 dB more H2 than the dry signal.
-        // Adjust in [0.2, 0.5] to trade harmonic richness vs level transparency.
-        static constexpr double kTubeMix = 0.3;
-        buffer[i * 2] = static_cast<float>(in_l * (1.0 - kTubeMix) + harm_l * kTubeMix);
+        buffer[i * 2] = static_cast<float>(in_l * (1.0 - mix_amount_) + harm_l * mix_amount_);
 
         const double in_r = buffer[i * 2 + 1];
         double harm_r = high_pass_[1].ProcessSample(in_r);
         harm_r = tube_[1].Process(harm_r);
         harm_r = low_pass_[1].ProcessSample(harm_r);
-        buffer[i * 2 + 1] = static_cast<float>(in_r * (1.0 - kTubeMix) + harm_r * kTubeMix);
+        buffer[i * 2 + 1] = static_cast<float>(in_r * (1.0 - mix_amount_) + harm_r * mix_amount_);
     }
 }
 
@@ -54,7 +50,7 @@ void TubeSimulator::Reset() {
         high_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::HIGH_PASS,
             0.0f,
-            80.0f,
+            120.0f,
             sampling_rate_,
             0.717f,
             false
@@ -88,6 +84,15 @@ void TubeSimulator::SetTubeType(const int model) {
         tube_type_ = t;
         Reset();
     }
+}
+
+void TubeSimulator::SetTubeMix(const float mix) {
+    mix_amount_ = (mix < 0.0f) ? 0.0f : (mix > 1.0f) ? 1.0f : mix;
+}
+
+void TubeSimulator::SetTubeDrive(const float drive) {
+    tube_[0].SetDrive(static_cast<double>(drive));
+    tube_[1].SetDrive(static_cast<double>(drive));
 }
 
 void TubeSimulator::SetSamplingRate(const uint32_t sampling_rate) {

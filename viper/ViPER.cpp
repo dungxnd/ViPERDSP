@@ -791,6 +791,18 @@ void ViPER::DispatchRawParam(
             tube_simulator_.SetTubeType(val1);
             break;
         }
+        case kParamTubeSimulatorDrive: {
+            const float drive = val1 / 100.0f;  // UI sends int×100 (e.g. 200 = 2.0)
+            VIPER_LOGI("TubeSim: drive=%.2f", drive);
+            tube_simulator_.SetTubeDrive(drive);
+            break;
+        }
+        case kParamTubeSimulatorMix: {
+            const float mix = val1 / 100.0f;    // UI sends int×100 (e.g. 30 = 0.30)
+            VIPER_LOGI("TubeSim: mix=%.2f", mix);
+            tube_simulator_.SetTubeMix(mix);
+            break;
+        }
 
         // AnalogX
         case kParamAnalogXEnable: {
@@ -1314,6 +1326,8 @@ void ViPER::ApplyCure(const viper::CureParams &p) {
 
 void ViPER::ApplyTubeSimulator(const viper::TubeSimulatorParams &p) {
     tube_simulator_.SetTubeType(p.model);
+    tube_simulator_.SetTubeDrive(p.drive);
+    tube_simulator_.SetTubeMix(p.mix);
     tube_simulator_.SetEnable(p.enable);
     last_applied_.tube_simulator = p;
 }
