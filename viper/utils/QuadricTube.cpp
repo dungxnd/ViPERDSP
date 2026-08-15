@@ -64,7 +64,7 @@ void QuadricTube::Reset() {
     const double discriminant = (B * B) - (k_4A_ * C);
     
     double i_p = 0.0;
-    if (discriminant >= 0.0) {
+    if (discriminant >= -1e-12) {
         i_p = (-B - std::sqrt(discriminant)) / k_2A_;
         if (i_p < 0.0) i_p = 0.0;
     }
