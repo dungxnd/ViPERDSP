@@ -1,8 +1,23 @@
 #include "TubeSimulator.h"
 #include "../constants.h"
 
+// Per-model circuit parameters: { TubeModel, Vdd, Rp, bias }
+// 12AX7: high-gain stage, classic V4A topology
+// 6N1J:  Soviet medium-gain, warmer H2 character (mu=35, gm=4.35mA/V)
+static constexpr struct {
+    TubeModel   model;
+    double      vdd;
+    double      rp;
+    double      bias;
+} kTubeConfigs[] = {
+    { { 1.014e-5, 5.498e-8, 1.076e-5 }, 250.0, 100000.0, -1.5 },  // 0: 12AX7
+    { { 5.7349e-5, 5.1490e-7, 3.6043e-5 }, 250.0, 20000.0, -2.0 }, // 1: 6N1J
+};
+static constexpr int kTubeConfigCount = static_cast<int>(sizeof(kTubeConfigs) / sizeof(kTubeConfigs[0]));
+
 TubeSimulator::TubeSimulator() :
     enable_(false),
+    tube_type_(TubeType::k12AX7),
     sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE) {
     Reset();
 }
@@ -32,6 +47,9 @@ void TubeSimulator::Process(float *buffer, const uint32_t size) {
 void TubeSimulator::Reset() {
     const float lp_cutoff = static_cast<float>(sampling_rate_) / 2.0f - 2000.0f;
 
+    const int idx = static_cast<int>(tube_type_);
+    const auto &cfg = kTubeConfigs[idx < kTubeConfigCount ? idx : 0];
+
     for (uint32_t ch = 0; ch < 2; ch++) {
         high_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::HIGH_PASS,
@@ -49,7 +67,7 @@ void TubeSimulator::Reset() {
             0.717f,
             false
         );
-        tube_[ch].Reset();
+        tube_[ch].SetTubeModel(cfg.model, cfg.vdd, cfg.rp, cfg.bias);
     }
 }
 
@@ -59,6 +77,16 @@ void TubeSimulator::SetEnable(const bool enable) {
             Reset();
         }
         enable_ = enable;
+    }
+}
+
+void TubeSimulator::SetTubeType(const int model) {
+    const TubeType t = (model >= 0 && model < kTubeConfigCount)
+        ? static_cast<TubeType>(model)
+        : TubeType::k12AX7;
+    if (tube_type_ != t) {
+        tube_type_ = t;
+        Reset();
     }
 }
 

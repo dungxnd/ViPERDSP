@@ -786,6 +786,11 @@ void ViPER::DispatchRawParam(
             tube_simulator_.SetEnable(val1 != 0);
             break;
         }
+        case kParamTubeSimulatorModel: {
+            VIPER_LOGI("TubeSim: model=%d", val1);
+            tube_simulator_.SetTubeType(val1);
+            break;
+        }
 
         // AnalogX
         case kParamAnalogXEnable: {
@@ -1308,6 +1313,7 @@ void ViPER::ApplyCure(const viper::CureParams &p) {
 }
 
 void ViPER::ApplyTubeSimulator(const viper::TubeSimulatorParams &p) {
+    tube_simulator_.SetTubeType(p.model);
     tube_simulator_.SetEnable(p.enable);
     last_applied_.tube_simulator = p;
 }

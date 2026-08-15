@@ -6,17 +6,25 @@
 
 class TubeSimulator {
 public:
+    // Model 0 = 12AX7 (default, high-gain)
+    // Model 1 = 6N1J  (Soviet medium-gain, warmer character)
+    enum class TubeType : int {
+        k12AX7 = 0,
+        k6N1J  = 1,
+    };
+
     TubeSimulator();
 
     void Process(float *buffer, uint32_t size);
     void Reset();
 
     void SetEnable(bool enable);
+    void SetTubeType(int model);
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
     bool enable_;
-
+    TubeType tube_type_;
     uint32_t sampling_rate_;
 
     std::array<MultiBiquad, 2> high_pass_;

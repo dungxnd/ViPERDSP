@@ -1,7 +1,16 @@
 #include "QuadricTube.h"
 #include <cmath>
 
+// 12AX7 — high-gain dual triode (ECC83). Datasheet basis:
+//   Va=250V, Vg=-1.5V, Ia≈0.77mA → mu≈100, gm≈1.27mA/V, rp≈76kΩ
 static constexpr TubeModel TUBE_12AX7 = { 1.014e-5, 5.498e-8, 1.076e-5 };
+
+// 6N1J — Soviet medium-gain dual triode (military 6N1P variant). Datasheet basis:
+//   Va=100V, Vg=-1V, Ia=7.5mA → mu=35, gm=4.35mA/V, rp=8046Ω
+//   Fitted via QuadricTube closed-form: kp2=(gm/(2·mu·√Ia))², kpg=2·kp2·mu,
+//   kp solved from f0=√Ia at the operating point.
+//   Use: SetTubeModel(TUBE_6N1J, 250.0, 20000.0, -2.0)
+static constexpr TubeModel TUBE_6N1J  = { 5.7349e-5, 5.1490e-7, 3.6043e-5 };
 
 QuadricTube::QuadricTube() {
     SetTubeModel(TUBE_12AX7, 250.0, 100000.0, -1.5);
