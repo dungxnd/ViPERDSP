@@ -96,5 +96,5 @@ int AdaptiveBuffer::PushZero(const uint32_t length) {
 
 void AdaptiveBuffer::FlushBuffer() {
     offset_ = 0;
-    std::fill(buffer_.begin(), buffer_.end(), 0.0f);
+    memset(buffer_.data(), 0, buffer_.size() * sizeof(float));
 }
