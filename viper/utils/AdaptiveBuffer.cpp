@@ -1,4 +1,5 @@
 #include "AdaptiveBuffer.h"
+#include <cstring>
 
 AdaptiveBuffer::AdaptiveBuffer(const uint32_t channels, const uint32_t length) :
     length_(length),

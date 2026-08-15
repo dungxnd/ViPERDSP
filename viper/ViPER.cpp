@@ -3,6 +3,7 @@
 #include "../include/log.h"
 #include "constants.h"
 #include "utils/Crc32.h"
+#include <cstring>
 
 using namespace viper::params;
 

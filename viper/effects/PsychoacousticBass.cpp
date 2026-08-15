@@ -1,5 +1,6 @@
 #include "PsychoacousticBass.h"
 #include "../constants.h"
+#include <cmath>
 
 static constexpr float kHarmonicOrder2[10] = {
     0.0f,

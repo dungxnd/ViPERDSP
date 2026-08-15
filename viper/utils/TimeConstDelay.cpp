@@ -1,4 +1,5 @@
 #include "TimeConstDelay.h"
+#include <cstdint>
 
 TimeConstDelay::TimeConstDelay() :
     offset_(0),

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <vector>
+#include <cstdint>
 
 class ViPERDDC {
 public:
