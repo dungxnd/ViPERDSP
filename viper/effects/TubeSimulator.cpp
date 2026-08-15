@@ -36,7 +36,7 @@ void TubeSimulator::Reset() {
         high_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::HIGH_PASS,
             0.0f,
-            120.0f,
+            80.0f,
             sampling_rate_,
             0.717f,
             false
