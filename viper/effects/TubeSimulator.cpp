@@ -25,18 +25,28 @@ TubeSimulator::TubeSimulator() :
 void TubeSimulator::Process(float *buffer, const uint32_t size) {
     if (!enable_) return;
 
+    // Hoist mix coefficients once per block — avoids repeated float→double widening
+    // and float subtraction inside the hot loop.
+    const double wet_gain = static_cast<double>(mix_amount_);
+    const double dry_gain = 1.0 - wet_gain;
+
     for (uint32_t i = 0; i < size; i++) {
         const double in_l = buffer[i * 2];
+        // Phase-matched dry path: same APF poles as HPF + LPF on the wet chain
+        const double dry_l = dry_apf_lpf_[0].ProcessSample(
+                                 dry_apf_hpf_[0].ProcessSample(in_l));
         double harm_l = high_pass_[0].ProcessSample(in_l);
         harm_l = tube_[0].Process(harm_l);
         harm_l = low_pass_[0].ProcessSample(harm_l);
-        buffer[i * 2] = static_cast<float>(in_l * (1.0 - mix_amount_) + harm_l * mix_amount_);
+        buffer[i * 2] = static_cast<float>(dry_l * dry_gain + harm_l * wet_gain);
 
         const double in_r = buffer[i * 2 + 1];
+        const double dry_r = dry_apf_lpf_[1].ProcessSample(
+                                 dry_apf_hpf_[1].ProcessSample(in_r));
         double harm_r = high_pass_[1].ProcessSample(in_r);
         harm_r = tube_[1].Process(harm_r);
         harm_r = low_pass_[1].ProcessSample(harm_r);
-        buffer[i * 2 + 1] = static_cast<float>(in_r * (1.0 - mix_amount_) + harm_r * mix_amount_);
+        buffer[i * 2 + 1] = static_cast<float>(dry_r * dry_gain + harm_r * wet_gain);
     }
 }
 
@@ -49,20 +59,19 @@ void TubeSimulator::Reset() {
     for (uint32_t ch = 0; ch < 2; ch++) {
         high_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::HIGH_PASS,
-            0.0f,
-            120.0f,
-            sampling_rate_,
-            0.717f,
-            false
-        );
+            0.0f, 120.0f, sampling_rate_, 0.717f, false);
         low_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::LOW_PASS,
-            0.0f,
-            lp_cutoff,
-            sampling_rate_,
-            0.717f,
-            false
-        );
+            0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
+
+        // Matched allpass on dry path: same poles as HPF/LPF → cancels phase mismatch
+        dry_apf_hpf_[ch].RefreshFilter(
+            MultiBiquad::FilterType::ALL_PASS,
+            0.0f, 120.0f, sampling_rate_, 0.717f, false);
+        dry_apf_lpf_[ch].RefreshFilter(
+            MultiBiquad::FilterType::ALL_PASS,
+            0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
+
         tube_[ch].SetTubeModel(cfg.model, cfg.vdd, cfg.rp, cfg.bias);
     }
 }

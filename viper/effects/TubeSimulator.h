@@ -33,4 +33,9 @@ private:
     std::array<MultiBiquad, 2> high_pass_;
     std::array<QuadricTube, 2> tube_;
     std::array<MultiBiquad, 2> low_pass_;
+
+    // Matched allpass filters for the dry path — same poles as HPF/LPF above,
+    // so dry and wet signal accumulate identical phase rotation before blending.
+    std::array<MultiBiquad, 2> dry_apf_hpf_;
+    std::array<MultiBiquad, 2> dry_apf_lpf_;
 };
