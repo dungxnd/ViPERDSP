@@ -9,7 +9,7 @@ WaveBuffer::WaveBuffer(const uint32_t channels, const uint32_t length) :
 
 void WaveBuffer::Reset() {
     index_ = 0;
-    std::fill(buffer_.begin(), buffer_.end(), 0.0f);
+    memset(buffer_.data(), 0, buffer_.size() * sizeof(float));
 }
 
 uint32_t WaveBuffer::GetBufferOffset() const {
