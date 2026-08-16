@@ -6,3 +6,12 @@ requires-python = "==3.11.*"
 dependencies = [
     "libclang==18.1.1",
 ]
+
+[project.scripts]
+quadric-tube = "quadric_tube:main"
+
+# quadric_tube.py — Quadric Surface triode toolkit (zero external deps)
+# Usage:
+#   python tools/quadric_tube.py fit    --points points.csv
+#   python tools/quadric_tube.py verify --kp 4.6931e-5 --kp2 6.1383e-7 --kpg 2.2105e-5 --rp 22000 --bias -8.5
+#   python tools/quadric_tube.py wdf    --kp 4.6931e-5 --kp2 6.1383e-7 --kpg 2.2105e-5 --z1 22000 --z3 2200 --sim

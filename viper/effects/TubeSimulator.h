@@ -7,10 +7,12 @@
 class TubeSimulator {
 public:
     // Model 0 = 12AX7 (default, high-gain)
-    // Model 1 = 6N1J  (Soviet medium-gain, warmer character)
+    // Model 1 = 6N1P  (Soviet medium-gain, warm H2 character)
+    // Model 2 = 12AU7 (clean, low-distortion, high headroom)
     enum class TubeType : int {
         k12AX7 = 0,
         k6N1J  = 1,
+        k12AU7 = 2,
     };
 
     TubeSimulator();

@@ -2,12 +2,28 @@
 #include "../constants.h"
 
 // Per-model circuit parameters: { TubeModel, Vdd, Rp, bias, output_gain }
-// 12AX7: high-gain stage, classic V4A topology
-// 6N1J:  Soviet medium-gain, warmer H2 character (mu=35, gm=4.35mA/V)
+// 12AX7: high-gain stage, classic V4A topology                    (mu≈98,  gm=1.6mA/V)
+// 6N1P:  Soviet medium-gain, warm H2 character                    (mu=30.8, gm=4.5mA/V)
+// 12AU7: clean low-distortion triode, high headroom               (mu=18,  gm=3.0mA/V)
 //
 // output_gain normalises each tube to the same perceived loudness at equal drive.
-// 12AX7 small-signal gain = 0.5534, 6N1J = 0.2430 (ratio 2.277x / +7.15 dB).
-// 6N1J compensating factor = 0.5534 / 0.2430 = 2.277 (12AX7 is the reference at 1.0).
+// Reference: 12AX7 small-signal gain = 0.5534 (drive=1, Rp=100kΩ).
+//   6N1P  gain = 0.2186 → comp = 0.5534/0.2186 = 2.531  (+8.07 dB)
+//   12AU7 gain = 0.1176 → comp = 0.5534/0.1176 = 4.707  (+13.46 dB)
+//
+// 6N1P quadric parameters: LS fit over 10 Russian datasheet points
+//   (Vp ∈ {100..350}V, Vg ∈ {0,-2,-4,-6,-8}V — Page 2 averaged characteristics)
+//   sqrt(ip) = c1*Vp + c2*Vg + c0
+//   c1=9.379e-4, c2=2.889e-2, c0=2.599e-2  →  RMS fit error 5.3%
+//   kp2=c1²=8.7966e-7, kpg=2*c1*c2=5.4189e-5, kp=2*c1*c0=4.8753e-5, mu=c2/c1=30.8
+//   Circuit: Rp=20kΩ, bias=-4.0V → Ia_q=4.25mA, Vpk_q=165V (centred swing)
+//
+// 12AU7 quadric parameters: LS fit over 8 Brimar datasheet points
+//   (Vp ∈ {100..300}V, Vg ∈ {0,-5,-8.5,-10}V — Curve No. 313.20)
+//   sqrt(ip) = c1*Vp + c2*Vg + c0
+//   c1=7.835e-4, c2=1.411e-2, c0=2.995e-2  →  RMS fit error 5.3%
+//   kp2=c1²=6.1383e-7, kpg=2*c1*c2=2.2105e-5, kp=2*c1*c0=4.6931e-5, mu=c2/c1=18.01
+//   Circuit: Rp=22kΩ, bias=-8.5V → Ia_q=2.98mA, Vpk_q=184.5V (centred swing)
 static constexpr struct {
     TubeModel   model;
     double      vdd;
@@ -15,8 +31,9 @@ static constexpr struct {
     double      bias;
     double      output_gain; // level-matching compensation relative to 12AX7
 } kTubeConfigs[] = {
-    { { 1.014e-5, 5.498e-8, 1.076e-5 },    250.0, 100000.0, -1.5, 1.000 },  // 0: 12AX7 (reference)
-    { { 5.7349e-5, 5.1490e-7, 3.6043e-5 }, 250.0,  20000.0, -2.0, 2.277 },  // 1: 6N1J  (+7.15 dB comp)
+    { { 1.014e-5,   5.498e-8,  1.076e-5  }, 250.0, 100000.0, -1.5, 1.000 },  // 0: 12AX7 (reference)
+    { { 4.8753e-5,  8.7966e-7, 5.4189e-5 }, 250.0,  20000.0, -4.0, 2.531 },  // 1: 6N1P  (+8.07 dB comp)
+    { { 4.6931e-5,  6.1383e-7, 2.2105e-5 }, 250.0,  22000.0, -8.5, 4.707 },  // 2: 12AU7 (+13.46 dB comp)
 };
 static constexpr int kTubeConfigCount = static_cast<int>(sizeof(kTubeConfigs) / sizeof(kTubeConfigs[0]));
 
