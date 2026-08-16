@@ -1,17 +1,22 @@
 #include "TubeSimulator.h"
 #include "../constants.h"
 
-// Per-model circuit parameters: { TubeModel, Vdd, Rp, bias }
+// Per-model circuit parameters: { TubeModel, Vdd, Rp, bias, output_gain }
 // 12AX7: high-gain stage, classic V4A topology
 // 6N1J:  Soviet medium-gain, warmer H2 character (mu=35, gm=4.35mA/V)
+//
+// output_gain normalises each tube to the same perceived loudness at equal drive.
+// 12AX7 small-signal gain = 0.5534, 6N1J = 0.2430 (ratio 2.277x / +7.15 dB).
+// 6N1J compensating factor = 0.5534 / 0.2430 = 2.277 (12AX7 is the reference at 1.0).
 static constexpr struct {
     TubeModel   model;
     double      vdd;
     double      rp;
     double      bias;
+    double      output_gain; // level-matching compensation relative to 12AX7
 } kTubeConfigs[] = {
-    { { 1.014e-5, 5.498e-8, 1.076e-5 }, 250.0, 100000.0, -1.5 },  // 0: 12AX7
-    { { 5.7349e-5, 5.1490e-7, 3.6043e-5 }, 250.0, 20000.0, -2.0 }, // 1: 6N1J
+    { { 1.014e-5, 5.498e-8, 1.076e-5 },    250.0, 100000.0, -1.5, 1.000 },  // 0: 12AX7 (reference)
+    { { 5.7349e-5, 5.1490e-7, 3.6043e-5 }, 250.0,  20000.0, -2.0, 2.277 },  // 1: 6N1J  (+7.15 dB comp)
 };
 static constexpr int kTubeConfigCount = static_cast<int>(sizeof(kTubeConfigs) / sizeof(kTubeConfigs[0]));
 
@@ -72,7 +77,7 @@ void TubeSimulator::Reset() {
             MultiBiquad::FilterType::ALL_PASS,
             0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
 
-        tube_[ch].SetTubeModel(cfg.model, cfg.vdd, cfg.rp, cfg.bias);
+        tube_[ch].SetTubeModel(cfg.model, cfg.vdd, cfg.rp, cfg.bias, cfg.output_gain);
     }
 }
 

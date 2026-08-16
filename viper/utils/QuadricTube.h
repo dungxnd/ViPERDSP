@@ -17,15 +17,18 @@ public:
     void Reset();
 
     // Use this to change the tube model dynamically
-    void SetTubeModel(const TubeModel& model, double vdd, double rp, double bias);
+    void SetTubeModel(const TubeModel& model, double vdd, double rp, double bias,
+                      double output_gain = 1.0);
 
     void SetDrive(double drive);
 
 private:
+    bool   configured_    = false; // true only after a valid SetTubeModel() call
     double vdd_           = 0.0;
     double rp_            = 1.0;   // Non-zero to avoid division by zero in k_A_
     double bias_          = 0.0;
     double output_scale_  = 0.0;
+    double output_gain_   = 1.0;   // Per-tube level-matching factor
     double drive_factor_  = 2.0;   // Input gain multiplier [1.0 – 10.0]; default 2.0
     TubeModel tube_       = {};
 
