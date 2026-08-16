@@ -10,11 +10,13 @@ public:
     // Model 1 = 6N1P  (Soviet medium-gain, warm H2 character)
     // Model 2 = 12AU7 (clean, low-distortion, high headroom)
     // Model 3 = 12AT7 (high-transconductance, medium-high gain)
+    // Model 4 = 6DJ8  (high-gm frame-grid triode, open/airy character)
     enum class TubeType : int {
         k12AX7 = 0,
         k6N1J  = 1,
         k12AU7 = 2,
         k12AT7 = 3,
+        k6DJ8  = 4,
     };
 
     TubeSimulator();
