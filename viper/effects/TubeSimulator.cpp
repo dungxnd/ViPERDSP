@@ -101,7 +101,7 @@ void TubeSimulator::Reset() {
     for (uint32_t ch = 0; ch < 2; ch++) {
         high_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::HIGH_PASS,
-            0.0f, 120.0f, sampling_rate_, 0.717f, false);
+            0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
         low_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::LOW_PASS,
             0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
@@ -109,7 +109,7 @@ void TubeSimulator::Reset() {
         // Matched allpass on dry path: same poles as HPF/LPF → cancels phase mismatch
         dry_apf_hpf_[ch].RefreshFilter(
             MultiBiquad::FilterType::ALL_PASS,
-            0.0f, 120.0f, sampling_rate_, 0.717f, false);
+            0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
         dry_apf_lpf_[ch].RefreshFilter(
             MultiBiquad::FilterType::ALL_PASS,
             0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
@@ -144,6 +144,24 @@ void TubeSimulator::SetTubeMix(const float mix) {
 void TubeSimulator::SetTubeDrive(const float drive) {
     tube_[0].SetDrive(static_cast<double>(drive));
     tube_[1].SetDrive(static_cast<double>(drive));
+}
+
+void TubeSimulator::SetTubeHpfCutoff(const float cutoff_hz) {
+    // Clamp to safe operating range [20 Hz – 250 Hz].
+    const float clamped = (cutoff_hz < 20.0f) ? 20.0f
+                        : (cutoff_hz > 250.0f) ? 250.0f
+                        : cutoff_hz;
+    if (hpf_cutoff_hz_ == clamped) return;
+    hpf_cutoff_hz_ = clamped;
+    // Update wet HPF and dry APF synchronously — tube DC-blocker state is untouched.
+    for (uint32_t ch = 0; ch < 2; ch++) {
+        high_pass_[ch].RefreshFilter(
+            MultiBiquad::FilterType::HIGH_PASS,
+            0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
+        dry_apf_hpf_[ch].RefreshFilter(
+            MultiBiquad::FilterType::ALL_PASS,
+            0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
+    }
 }
 
 void TubeSimulator::SetSamplingRate(const uint32_t sampling_rate) {

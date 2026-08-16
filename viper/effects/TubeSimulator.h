@@ -28,12 +28,14 @@ public:
     void SetTubeType(int model);
     void SetTubeMix(float mix);
     void SetTubeDrive(float drive);
+    void SetTubeHpfCutoff(float cutoff_hz);  // [20 Hz – 250 Hz]; default 120 Hz
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
     bool enable_;
     TubeType tube_type_;
-    float mix_amount_ = 0.3f;  // Wet/dry ratio [0.0 - 1.0]; default 30%
+    float mix_amount_    = 0.3f;    // Wet/dry ratio [0.0 - 1.0]; default 30%
+    float hpf_cutoff_hz_ = 120.0f;  // Tunable HPF cutoff [20 – 250 Hz]; default 120 Hz
     uint32_t sampling_rate_;
 
     std::array<MultiBiquad, 2> high_pass_;

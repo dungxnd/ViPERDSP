@@ -803,6 +803,11 @@ void ViPER::DispatchRawParam(
             tube_simulator_.SetTubeMix(mix);
             break;
         }
+        case kParamTubeSimulatorHpfCutoff: {
+            VIPER_LOGI("TubeSim: hpf_cutoff=%d Hz", val1);
+            tube_simulator_.SetTubeHpfCutoff(static_cast<float>(val1));
+            break;
+        }
 
         // AnalogX
         case kParamAnalogXEnable: {
@@ -1328,6 +1333,7 @@ void ViPER::ApplyTubeSimulator(const viper::TubeSimulatorParams &p) {
     tube_simulator_.SetTubeType(p.model);
     tube_simulator_.SetTubeDrive(p.drive);
     tube_simulator_.SetTubeMix(p.mix);
+    tube_simulator_.SetTubeHpfCutoff(p.hpf_cutoff);
     tube_simulator_.SetEnable(p.enable);
     last_applied_.tube_simulator = p;
 }
