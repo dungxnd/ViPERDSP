@@ -1,7 +1,7 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.25)
 project(ViPERDSP LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(VIPERDSP_SOURCES
@@ -48,6 +48,7 @@ set(VIPERDSP_SOURCES
     viper/utils/DynamicBass.cpp
     viper/utils/FIR.cpp
     viper/utils/Harmonic.cpp
+    viper/utils/QuadricTube.cpp
     viper/utils/HiFi.cpp
     viper/utils/HighShelf.cpp
     viper/utils/IIR_1st.cpp

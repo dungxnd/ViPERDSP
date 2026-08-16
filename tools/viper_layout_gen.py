@@ -15,7 +15,7 @@ ViPER4Android:
         --header          ViPERDSP/include/ViPERParams.h \
         --include_dir     ViPERDSP/include \
         --lang            kotlin \
-        --package         com.llsl.viper4android.viper \
+        --package         com.dxnd.viper4android.viper \
         --output          ViperParamsLayout.kt \
         --generator_path  ViPERDSP/tools/viper_layout_gen.py
 

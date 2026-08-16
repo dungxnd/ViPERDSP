@@ -3,6 +3,7 @@
 #include "../include/log.h"
 #include "constants.h"
 #include "utils/Crc32.h"
+#include <cstring>
 
 using namespace viper::params;
 
@@ -785,6 +786,28 @@ void ViPER::DispatchRawParam(
             tube_simulator_.SetEnable(val1 != 0);
             break;
         }
+        case kParamTubeSimulatorModel: {
+            VIPER_LOGI("TubeSim: model=%d", val1);
+            tube_simulator_.SetTubeType(val1);
+            break;
+        }
+        case kParamTubeSimulatorDrive: {
+            const float drive = val1 / 100.0f;  // UI sends int×100 (e.g. 200 = 2.0)
+            VIPER_LOGI("TubeSim: drive=%.2f", drive);
+            tube_simulator_.SetTubeDrive(drive);
+            break;
+        }
+        case kParamTubeSimulatorMix: {
+            const float mix = val1 / 100.0f;    // UI sends int×100 (e.g. 30 = 0.30)
+            VIPER_LOGI("TubeSim: mix=%.2f", mix);
+            tube_simulator_.SetTubeMix(mix);
+            break;
+        }
+        case kParamTubeSimulatorHpfCutoff: {
+            VIPER_LOGI("TubeSim: hpf_cutoff=%d Hz", val1);
+            tube_simulator_.SetTubeHpfCutoff(static_cast<float>(val1));
+            break;
+        }
 
         // AnalogX
         case kParamAnalogXEnable: {
@@ -1307,6 +1330,10 @@ void ViPER::ApplyCure(const viper::CureParams &p) {
 }
 
 void ViPER::ApplyTubeSimulator(const viper::TubeSimulatorParams &p) {
+    tube_simulator_.SetTubeType(p.model);
+    tube_simulator_.SetTubeDrive(p.drive);
+    tube_simulator_.SetTubeMix(p.mix);
+    tube_simulator_.SetTubeHpfCutoff(p.hpf_cutoff);
     tube_simulator_.SetEnable(p.enable);
     last_applied_.tube_simulator = p;
 }

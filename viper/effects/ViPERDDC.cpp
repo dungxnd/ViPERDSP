@@ -1,6 +1,8 @@
 #include "ViPERDDC.h"
 #include "../../include/log.h"
 #include "../constants.h"
+#include <cstdint>
+#include <cstring>
 
 ViPERDDC::ViPERDDC() :
     enable_(false),

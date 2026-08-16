@@ -1,4 +1,6 @@
 #include "FIR.h"
+#include <cstdint>
+#include <cstring>
 
 FIR::FIR() :
     has_coefficients_(false),
