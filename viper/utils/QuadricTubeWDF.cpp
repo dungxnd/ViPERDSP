@@ -1,5 +1,7 @@
 #include "QuadricTubeWDF.h"
 
+#include <cmath>
+
 void QuadricTubeWDF::SetTubeModel(const TubeModel& model, double vdd, double rp, double bias,
                                   double output_gain) {
     if (vdd <= 0.0 || rp <= 0.0 || model.kp2 <= 0.0) {
@@ -24,7 +26,11 @@ double QuadricTubeWDF::Process(double sample) {
     if (!configured_) return 0.0;
 
     const double prev_last = last_processed_;
-    const double v_gk = sample * drive_factor_ + bias_;
+    const double bias_scale = std::sqrt(std::abs(bias_) / 1.5);
+    double v_gk = sample * drive_factor_ * bias_scale + bias_;
+    if (v_gk > 0.0) {
+        v_gk = 0.5 * std::tanh(v_gk * 2.0);
+    }
 
     triode_.SetIncident(vdd_, v_gk, 0.0);
     triode_.Scatter();
