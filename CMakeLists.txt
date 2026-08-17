@@ -49,6 +49,8 @@ set(VIPERDSP_SOURCES
     viper/utils/FIR.cpp
     viper/utils/Harmonic.cpp
     viper/utils/QuadricTube.cpp
+    viper/utils/QuadricTubeWDF.cpp
+    viper/utils/TriodeWDF3Port.cpp
     viper/utils/HiFi.cpp
     viper/utils/HighShelf.cpp
     viper/utils/IIR_1st.cpp

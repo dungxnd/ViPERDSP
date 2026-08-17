@@ -78,7 +78,9 @@ void TubeSimulator::Process(float *buffer, const uint32_t size) {
         const double dry_l = dry_apf_lpf_[0].ProcessSample(
                                  dry_apf_hpf_[0].ProcessSample(in_l));
         double harm_l = high_pass_[0].ProcessSample(in_l);
-        harm_l = tube_[0].Process(harm_l);
+        harm_l = (tube_mode_ == TubeMode::kStatic)
+            ? tube_[0].Process(harm_l)
+            : tube_wdf_[0].Process(harm_l);
         harm_l = low_pass_[0].ProcessSample(harm_l);
         buffer[i * 2] = static_cast<float>(dry_l * dry_gain + harm_l * wet_gain);
 
@@ -86,7 +88,9 @@ void TubeSimulator::Process(float *buffer, const uint32_t size) {
         const double dry_r = dry_apf_lpf_[1].ProcessSample(
                                  dry_apf_hpf_[1].ProcessSample(in_r));
         double harm_r = high_pass_[1].ProcessSample(in_r);
-        harm_r = tube_[1].Process(harm_r);
+        harm_r = (tube_mode_ == TubeMode::kStatic)
+            ? tube_[1].Process(harm_r)
+            : tube_wdf_[1].Process(harm_r);
         harm_r = low_pass_[1].ProcessSample(harm_r);
         buffer[i * 2 + 1] = static_cast<float>(dry_r * dry_gain + harm_r * wet_gain);
     }
@@ -115,6 +119,7 @@ void TubeSimulator::Reset() {
             0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
 
         tube_[ch].SetTubeModel(cfg.model, cfg.vdd, cfg.rp, cfg.bias, cfg.output_gain);
+        tube_wdf_[ch].SetTubeModel(cfg.model, cfg.vdd, cfg.rp, cfg.bias, cfg.output_gain);
     }
 }
 
@@ -137,13 +142,24 @@ void TubeSimulator::SetTubeType(const int model) {
     }
 }
 
+void TubeSimulator::SetTubeMode(const int mode) {
+    const TubeMode t = (mode == 1) ? TubeMode::kWDF : TubeMode::kStatic;
+    if (tube_mode_ != t) {
+        tube_mode_ = t;
+        Reset();
+    }
+}
+
 void TubeSimulator::SetTubeMix(const float mix) {
     mix_amount_ = (mix < 0.0f) ? 0.0f : (mix > 1.0f) ? 1.0f : mix;
 }
 
 void TubeSimulator::SetTubeDrive(const float drive) {
-    tube_[0].SetDrive(static_cast<double>(drive));
-    tube_[1].SetDrive(static_cast<double>(drive));
+    const double d = static_cast<double>(drive);
+    tube_[0].SetDrive(d);
+    tube_[1].SetDrive(d);
+    tube_wdf_[0].SetDrive(d);
+    tube_wdf_[1].SetDrive(d);
 }
 
 void TubeSimulator::SetTubeHpfCutoff(const float cutoff_hz) {

@@ -17,6 +17,7 @@ void QuadricTube::SetTubeModel(const TubeModel& model, double vdd, double rp, do
     rp_ = rp;
     bias_ = bias;
     output_gain_ = output_gain;
+    bias_scale_ = std::sqrt(std::abs(bias_) / 1.5);
 
     output_scale_ = -1.0 / (vdd_ / 2.5);
 
@@ -39,7 +40,10 @@ double QuadricTube::Process(const double sample) {
     if (!configured_) return 0.0;
 
     const double prev_last = last_processed_;
-    const double v_gk = (sample * drive_factor_) + bias_;
+    double v_gk = (sample * drive_factor_ * bias_scale_) + bias_;
+    if (v_gk > 0.0) {
+        v_gk = 0.5 * std::tanh(v_gk * 2.0);
+    }
 
     const double B = k_B_const_ + (k_B_vgk_ * v_gk);
     const double C = (k_C_vgk2_ * v_gk * v_gk) + (k_C_vgk_ * v_gk) + k_C_const_;
