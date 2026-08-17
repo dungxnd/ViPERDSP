@@ -18,11 +18,14 @@ public:
     void SetThreshold(float value) noexcept;
     void SetThresholdDb(float db) noexcept;
 
-    // Ratio: standard ratio (e.g., 4.0 for 4:1) or normalized slope [0.0 (1:1) to 1.0 (inf:1)]
+    // Ratio: standard ratio >= 1.0 (e.g., 1.0 for 1:1, 4.0 for 4:1) or normalized slope in [0.0, 1.0)
     void SetRatio(float value) noexcept;
+    // Explicit normalized slope [0.0 (1:1 / no compression) to 1.0 (inf:1 / limiter)]
+    void SetRatioSlope(float slope) noexcept;
 
-    // Knee Width: normalized [0.0 to 1.0] or explicit dB [0.0 to 30.0 dB]
+    // Knee Width: normalized [0.0 to 1.0] (maps to 0.0 to 60.0 dB) or explicit dB [0.0 to 60.0 dB]
     void SetKnee(float value) noexcept;
+    void SetKneeWidthDb(float db) noexcept;
     void SetKneeAuto(bool enable) noexcept;
 
     // Manual Make-Up Gain: normalized [0.0 (0 dB) to 1.0 (+60 dB)] or explicit dB [0.0 to 60.0]
@@ -53,8 +56,6 @@ private:
 
     // Helper to calculate one-pole filter coefficient (1 - e^(-1 / (tau * fs)))
     [[nodiscard]] static float CalculateAlpha(uint32_t sampling_rate, float time_seconds) noexcept;
-
-    void SetKneeWidthDb(float db) noexcept;
 
     // State / Config flags
     bool enable_{true};

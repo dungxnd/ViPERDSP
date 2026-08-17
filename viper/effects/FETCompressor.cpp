@@ -5,10 +5,10 @@
 
 namespace {
 // Minimum values to prevent denormals / division by zero
-constexpr float  kEpsilonLin = 1e-6f;
-constexpr float  kEpsilonSq  = 1e-12f;
+constexpr float kEpsilonLin = 1e-6f;
+constexpr float kEpsilonSq  = 1e-12f;
 // ln(10) / 20  — converts dB to natural-log domain
-constexpr float  kDb2Ln      = 2.302585092994046f / 20.0f;
+constexpr float kDb2Ln      = 2.302585092994046f / 20.0f;
 } // namespace
 
 [[nodiscard]] float FETCompressor::CalculateAlpha(
@@ -104,7 +104,7 @@ double FETCompressor::ProcessSidechain(const double in) noexcept {
     const float log_input = std::log(std::max(in_lin, kEpsilonLin));
     const float diff      = log_input - smoothed_threshold_ln_;
 
-    float knee_width     = smoothed_knee_ln_;
+    float knee_width      = smoothed_knee_ln_;
     float effective_slope = ratio_slope_;
 
     if (auto_knee_) {
@@ -156,7 +156,7 @@ double FETCompressor::ProcessSidechain(const double in) noexcept {
             const float output_level_ln = log_input - smoothed_gr - makeup_gain;
             if (output_level_ln > 0.0f) {
                 makeup_gain += output_level_ln; // Prevent clipping over 0 dBFS
-                adaptive_gain_state_ = output_level_ln;
+                adaptive_gain_state_ = makeup_gain - half_thresh_gr;
             }
         }
         return std::exp(static_cast<double>(-smoothed_gr - makeup_gain));
@@ -180,11 +180,17 @@ void FETCompressor::SetThresholdDb(const float db) noexcept {
 }
 
 void FETCompressor::SetRatio(const float value) noexcept {
-    if (value > 1.0f) {
+    if (value >= 1.0f) {
+        // Standard ratio (e.g. 1.0 for 1:1, 4.0 for 4:1)
         ratio_slope_ = 1.0f - (1.0f / value);
     } else {
+        // Normalized slope in [0.0, 1.0)
         ratio_slope_ = std::clamp(value, 0.0f, 1.0f);
     }
+}
+
+void FETCompressor::SetRatioSlope(const float slope) noexcept {
+    ratio_slope_ = std::clamp(slope, 0.0f, 1.0f);
 }
 
 void FETCompressor::SetKnee(const float value) noexcept {
