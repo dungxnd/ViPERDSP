@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import re
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,37 @@ from typing import Callable, Iterable
 
 import clang.cindex
 from clang.cindex import Cursor, CursorKind
+
+# ---------------------------------------------------------------------------
+# Regex constants used by the fallback regex parser (_regex_parse_header).
+# Pre-compiled here so they are shared across calls and the patterns are
+# visible at module scope rather than buried inside the function body.
+# ---------------------------------------------------------------------------
+
+# Strip C++ line comments.
+_RE_COMMENT = re.compile(r"//[^\n]*")
+# Locate the opening brace of `namespace viper`.
+_RE_NS = re.compile(r"\bnamespace\s+viper\s*\{")
+# Locate a struct definition opening brace.
+_RE_STRUCT = re.compile(r"\bstruct\s+(\w+)\s*\{")
+# Match a field declaration: <type> <name> [initializer] ;
+# Handles plain types, qualified names (::), pointers/refs, and
+# std::array<T, N>.  The initializer may be `= expr`, `{}`, or `{expr}`.
+_RE_FIELD = re.compile(
+    r"((?:std::array\s*<[^;>]+>|\w[\w:<>*&\s]*?)\s+)"
+    r"(\w+)\s*(?:(?:=\s*[^;{]+)|\{\}|\{[^}]*\})?\s*;"
+)
+# Detect std::array<T, N> so we can extract element type and count.
+_RE_ARRAY = re.compile(r"std::array\s*<\s*(\w[\w:]*)\s*,\s*(\d+)\s*>")
+
+# C++ keywords and non-data identifiers that the field regex may match
+# spuriously inside method bodies.  Frozen so membership tests are
+# O(1) without mutation risk.
+_REGEX_FIELD_SKIP: frozenset[str] = frozenset({
+    "return", "if", "else", "for", "while", "operator",
+    "bool", "int", "float", "double", "void", "const",
+    "constexpr", "static", "true", "false",
+})
 
 
 @dataclasses.dataclass
@@ -98,14 +130,26 @@ class LangConfig:
     name_case: Callable[[str], str]  # casing for C++-derived const names.
 
 
-def discover_stdlib_includes(compiler: str) -> list[str]:
+def discover_stdlib_includes(compiler: str) -> tuple[list[str], list[str]]:
+    """Return (isystem_paths, extra_args) for libclang's AST parser.
+
+    MinGW/MSYS2 ships a patched ``stdlib.h`` that libclang cannot parse.
+    We use ``-nostdinc``/``-nostdinc++`` to suppress all compiler-default
+    system includes, then selectively re-add only the C++ STL paths and the
+    clang resource-dir (which holds correct built-in C headers).  The plain
+    C include dir is omitted — libclang provides ``<cstdint>``, ``<cmath>``
+    wrappers itself.
+
+    Returns a tuple of (isystem_paths, extra_clang_args).
+    The caller must merge extra_clang_args into the libclang parse args.
+    """
     result = subprocess.run(
         [compiler, "-E", "-x", "c++", "-v", "-"],
         input="",
         capture_output=True,
         text=True,
     )
-    paths: list[str] = []
+    all_paths: list[str] = []
     in_search_list = False
     for line in result.stderr.splitlines():
         if line.startswith("#include <...>"):
@@ -115,8 +159,47 @@ def discover_stdlib_includes(compiler: str) -> list[str]:
             in_search_list = False
             continue
         if in_search_list and line.startswith(" "):
-            paths.append(line.strip().split(" (")[0])
-    return paths
+            all_paths.append(line.strip().split(" (")[0])
+
+    # Keep only C++ STL dirs and clang resource-dir includes.
+    # Exclude bare C runtime dirs (ucrt, mingw …/include) whose stdlib.h
+    # and wchar.h are incompatible with libclang's own built-in C headers.
+    isystem: list[str] = [
+        p for p in all_paths if "c++" in p or "clang" in p
+    ]
+    # Tell libclang not to search its own default system dirs (avoids
+    # double-resolution), then we inject exactly what we want.
+    extra_args = ["-nostdinc", "-nostdinc++"]
+    return isystem, extra_args
+
+
+def _check_fatal_diagnostics(tu) -> list:
+    """Return fatal (Error+) diagnostics; empty list means clean parse."""
+    return [d for d in tu.diagnostics if d.severity >= clang.cindex.Diagnostic.Error]
+
+
+def _collect_viper_structs(root: Cursor) -> dict[str, StructDef]:
+    """Walk the AST from `root`, collecting all struct/class definitions
+    inside the ``viper`` namespace. Uses an explicit stack to avoid
+    Python recursion-depth limits on large translation units.
+    """
+    structs: dict[str, StructDef] = {}
+    stack: list[tuple[Cursor, bool]] = [(root, False)]
+    while stack:
+        cursor, in_viper_ns = stack.pop()
+        if cursor.kind == CursorKind.NAMESPACE:
+            in_ns = in_viper_ns or cursor.spelling == "viper"
+            stack.extend((c, in_ns) for c in cursor.get_children())
+        elif not in_viper_ns:
+            stack.extend((c, False) for c in cursor.get_children())
+        elif cursor.kind in (CursorKind.STRUCT_DECL, CursorKind.CLASS_DECL):
+            if cursor.is_definition() and cursor.spelling:
+                structs[cursor.spelling] = StructDef(
+                    cpp_name=cursor.spelling,
+                    layout_name=strip_params_suffix(cursor.spelling),
+                    fields=list(extract_fields(cursor)),
+                )
+    return structs
 
 
 def parse_header(
@@ -124,44 +207,126 @@ def parse_header(
     include_dirs: list[Path],
     compiler: str,
 ) -> dict[str, StructDef]:
-    """Parse `header`, return all structs in the `viper` namespace."""
+    """Parse `header`, return all structs in the `viper` namespace.
+
+    Tries libclang first; falls back to a regex-based extractor when
+    libclang cannot parse the header (e.g. MinGW/MSYS2 system-header
+    incompatibilities on Windows).
+    """
+    isystem_paths, extra_args = discover_stdlib_includes(compiler)
+    args = (
+        ["-std=c++23", "-x", "c++"]
+        + [item for inc in include_dirs for item in ("-I", str(inc))]
+        + extra_args
+        + [item for inc in isystem_paths for item in ("-isystem", inc)]
+    )
     index = clang.cindex.Index.create()
-    args = ["-std=c++17", "-x", "c++"]
-    for inc in include_dirs:
-        args.extend(["-I", str(inc)])
-    for inc in discover_stdlib_includes(compiler):
-        args.extend(["-isystem", inc])
     tu = index.parse(str(header), args=args)
     if not tu:
         raise SystemExit(f"libclang failed to parse {header}")
-    diagnostics = list(tu.diagnostics)
-    fatal = [d for d in diagnostics if d.severity >= clang.cindex.Diagnostic.Error]
-    if fatal:
-        for d in fatal:
-            print(f"clang error: {d.spelling} at {d.location}", file=sys.stderr)
-        raise SystemExit("AST parse failed; fix C++ errors before codegen")
+    if not _check_fatal_diagnostics(tu):
+        return _collect_viper_structs(tu.cursor)
+
+    # libclang failed (typical on MSYS2/MinGW Windows) — fall back to
+    # a regex-based struct/field extractor.  This is sufficient because
+    # ViPERParams.h uses only plain field declarations with no macros.
+    print(
+        "warning: libclang AST parse had errors; using regex fallback parser",
+        file=sys.stderr,
+    )
+    return _regex_parse_header(header)
+
+
+def _extract_braced_section(text: str, start: int) -> tuple[str, int]:
+    """Return ``(body, end_pos)`` for the brace-delimited block that opens
+    at ``text[start - 1]`` (i.e. ``start`` points to the first character
+    *after* the opening ``{``).
+
+    ``body`` is the text between the braces (exclusive).
+    ``end_pos`` is the index one past the closing ``}``.
+    Raises ``SystemExit`` if the braces are unbalanced.
+    """
+    depth = 1
+    pos = start
+    while pos < len(text) and depth:
+        if text[pos] == "{":
+            depth += 1
+        elif text[pos] == "}":
+            depth -= 1
+        pos += 1
+    if depth:
+        raise SystemExit("unbalanced braces in header")
+    return text[start : pos - 1], pos
+
+
+def _regex_parse_header(header: Path) -> dict[str, StructDef]:
+    """Minimal regex-based struct/field extractor for ViPERParams.h.
+
+    Walks the file looking for ``struct FooParams { ... };`` blocks inside
+    a ``namespace viper`` and extracts field names + type spellings.
+    Good enough for the layout codegen use-case where we only need field
+    names (offsets come from the probe binary, not from libclang).
+    """
+    text = header.read_text(encoding="utf-8")
+
+    # Strip line comments so they don't confuse the parser.
+    text = _RE_COMMENT.sub("", text)
+
+    # Locate namespace viper { ... }
+    ns_match = _RE_NS.search(text)
+    if not ns_match:
+        raise SystemExit("namespace viper not found in header")
+    ns_body, _ = _extract_braced_section(text, ns_match.end())
 
     structs: dict[str, StructDef] = {}
 
-    def visit(cursor: Cursor, in_viper_ns: bool) -> None:
-        if cursor.kind == CursorKind.NAMESPACE:
-            for c in cursor.get_children():
-                visit(c, in_viper_ns or cursor.spelling == "viper")
-            return
-        if not in_viper_ns:
-            for c in cursor.get_children():
-                visit(c, False)
-            return
-        if cursor.kind in (CursorKind.STRUCT_DECL, CursorKind.CLASS_DECL):
-            if cursor.is_definition() and cursor.spelling:
-                fields = list(extract_fields(cursor))
-                structs[cursor.spelling] = StructDef(
-                    cpp_name=cursor.spelling,
-                    layout_name=strip_params_suffix(cursor.spelling),
-                    fields=fields,
-                )
+    # Find each struct/class definition: struct FooParams { ... };
+    for sm in _RE_STRUCT.finditer(ns_body):
+        name = sm.group(1)
+        body, _ = _extract_braced_section(ns_body, sm.end())
 
-    visit(tu.cursor, in_viper_ns=False)
+        fields: list[Field] = []
+        seen_fields: set[str] = set()
+        # Match simple field declarations: <type> <name> [= ...] ; or <type> <name>{} ;
+        # Handles: bool, int, float, uint32_t, std::array<T,N>
+        for fm in _RE_FIELD.finditer(body):
+            type_spell = fm.group(1).strip()
+            field_name = fm.group(2)
+            # Skip C++ keywords and non-data identifiers.
+            if field_name in _REGEX_FIELD_SKIP:
+                continue
+            # Skip constexpr locals inside method bodies (e.g. kEps):
+            # data fields use snake_case; local constants use kCamelCase.
+            if len(field_name) >= 2 and field_name[0] == "k" and field_name[1].isupper():
+                continue
+            # Skip anything that starts with uppercase (template params, etc.)
+            if field_name[0].isupper():
+                continue
+            # Detect std::array<T, N>
+            arr_m = _RE_ARRAY.match(type_spell)
+            if arr_m:
+                elem, count = arr_m.group(1), int(arr_m.group(2))
+            else:
+                elem, count = None, None
+            if field_name in seen_fields:
+                continue
+            seen_fields.add(field_name)
+            fields.append(
+                Field(
+                    name=field_name,
+                    type_spelling=type_spell,
+                    array_element=elem,
+                    array_count=count,
+                )
+            )
+
+        if fields:
+            structs[name] = StructDef(
+                cpp_name=name,
+                layout_name=strip_params_suffix(name),
+                fields=fields,
+            )
+
     return structs
 
 
@@ -241,7 +406,10 @@ def build_probe_source(structs: dict[str, StructDef], header: Path) -> str:
     """Generate a C++ source file that prints offsetof()/sizeof() for every field and struct."""
     lines = [
         "#include <cstddef>",
+        "#include <cstdint>",
         "#include <cstdio>",
+        "#include <cmath>",
+        "#include <array>",
         f'#include "{header.name}"',
         "int main() {",
     ]
@@ -350,6 +518,22 @@ def make_dart_config(generator_path: str) -> LangConfig:
     )
 
 
+def _emit_substruct_block(
+    lines: list[str], s: StructDef, struct_layout: dict, cfg: LangConfig
+) -> None:
+    """Append the open/fields/close lines for one non-root sub-struct."""
+    lines.append("")
+    lines.append(cfg.open_substruct.format(layout_name=s.layout_name))
+    lines.append(cfg.decl_substruct.format(name="SIZE", value=struct_layout["SIZE"]))
+    for f in s.fields:
+        offset = struct_layout["fields"][f.name]
+        lines.append(cfg.decl_substruct.format(name=cfg.name_case(f.name), value=offset))
+        if f.array_count is not None:
+            const_name = cfg.name_case(f.name) + cfg.array_suffix
+            lines.append(cfg.decl_substruct.format(name=const_name, value=f.array_count))
+    lines.append(cfg.close_block)
+
+
 def emit(
     structs: dict[str, StructDef],
     layout: dict[str, dict],
@@ -370,60 +554,23 @@ def emit(
 
     root = structs["ViPERParams"]
     root_layout = layout["ViPERParams"]
-    lines.append(
-        "  // Root struct: viper::ViPERParams"
-        if cfg.style == "flat_classes"
-        else "    // Root struct: viper::ViPERParams"
-    )
+    indent = cfg.decl_root[: len(cfg.decl_root) - len(cfg.decl_root.lstrip())]
+    lines.append(f"{indent}// Root struct: viper::ViPERParams")
     lines.append(cfg.decl_root.format(name="SIZE", value=root_layout["SIZE"]))
     for f in root.fields:
         offset = root_layout["fields"][f.name]
         lines.append(cfg.decl_root.format(name=cfg.name_case(f.name), value=offset))
 
+    sub_structs = [s for s in structs.values() if s.cpp_name != "ViPERParams"]
+
     if cfg.style == "nested":
-        for s in structs.values():
-            if s.cpp_name == "ViPERParams":
-                continue
-            lines.append("")
-            lines.append(cfg.open_substruct.format(layout_name=s.layout_name))
-            struct_layout = layout[s.cpp_name]
-            lines.append(
-                cfg.decl_substruct.format(name="SIZE", value=struct_layout["SIZE"])
-            )
-            for f in s.fields:
-                offset = struct_layout["fields"][f.name]
-                lines.append(
-                    cfg.decl_substruct.format(name=cfg.name_case(f.name), value=offset)
-                )
-                if f.array_count is not None:
-                    const_name = cfg.name_case(f.name) + cfg.array_suffix
-                    lines.append(
-                        cfg.decl_substruct.format(name=const_name, value=f.array_count)
-                    )
-            lines.append(cfg.close_block)
+        for s in sub_structs:
+            _emit_substruct_block(lines, s, layout[s.cpp_name], cfg)
         lines.append("}")
     elif cfg.style == "flat_classes":
         lines.append(cfg.close_block)
-        for s in structs.values():
-            if s.cpp_name == "ViPERParams":
-                continue
-            lines.append("")
-            lines.append(cfg.open_substruct.format(layout_name=s.layout_name))
-            struct_layout = layout[s.cpp_name]
-            lines.append(
-                cfg.decl_substruct.format(name="SIZE", value=struct_layout["SIZE"])
-            )
-            for f in s.fields:
-                offset = struct_layout["fields"][f.name]
-                lines.append(
-                    cfg.decl_substruct.format(name=cfg.name_case(f.name), value=offset)
-                )
-                if f.array_count is not None:
-                    const_name = cfg.name_case(f.name) + cfg.array_suffix
-                    lines.append(
-                        cfg.decl_substruct.format(name=const_name, value=f.array_count)
-                    )
-            lines.append(cfg.close_block)
+        for s in sub_structs:
+            _emit_substruct_block(lines, s, layout[s.cpp_name], cfg)
     else:
         raise SystemExit(f"unknown emit style: {cfg.style}")
 
