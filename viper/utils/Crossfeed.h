@@ -11,41 +11,44 @@ public:
 
     Crossfeed();
 
-    void ProcessFrames(float *buffer, uint32_t size);
-    void Reset();
+    void ProcessFrames(float *buffer, uint32_t size) noexcept;
+    void Reset() noexcept;
 
-    [[nodiscard]] uint32_t GetCutoff() const;
-    [[nodiscard]] float GetFeedback() const;
-    [[nodiscard]] float GetLevelDelay() const;
-    [[nodiscard]] Preset GetPreset() const;
+    [[nodiscard]] uint32_t GetCutoff() const noexcept;
+    [[nodiscard]] float GetFeedback() const noexcept;
+    [[nodiscard]] float GetLevelDelay() const noexcept;
+    [[nodiscard]] Preset GetPreset() const noexcept;
 
-    void SetCutoff(uint32_t value);
-    void SetFeedback(float value);
-    void SetPreset(Preset preset);
-    void SetSamplingRate(uint32_t sampling_rate);
+    void SetCutoff(uint32_t value) noexcept;
+    void SetFeedback(float value) noexcept;
+    void SetPreset(Preset preset) noexcept;
+    void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
-    void FilterSample(float *sample);
+    void FilterSample(float *sample) noexcept;
 
 private:
     uint32_t sampling_rate_;
 
-    float a0_lo_, b1_lo_;
-    float a0_hi_, b1_hi_, a1_hi_;
-    float gain_;
+    float a0_lo_{0.0f};
+    float b1_lo_{0.0f};
+    float a0_hi_{0.0f};
+    float b1_hi_{0.0f};
+    float a1_hi_{0.0f};
+    float gain_{0.0f};
 
-    struct {
-        float asis[2], lo[2], hi[2];
-    } lfs_;
+    struct Lfs {
+        float asis[2]{};
+        float lo[2]{};
+        float hi[2]{};
+    } lfs_{};
 
-    Preset preset_;
+    Preset preset_{700, 45};
 
-    [[nodiscard]] float ApplyLoFilter(const float in, const float out_1) const {
+    [[nodiscard]] float ApplyLoFilter(float in, float out_1) const noexcept {
         return a0_lo_ * in + b1_lo_ * out_1;
     }
 
-    [[nodiscard]] float ApplyHiFilter(
-        const float in, const float in_1, const float out_1
-    ) const {
+    [[nodiscard]] float ApplyHiFilter(float in, float in_1, float out_1) const noexcept {
         return a0_hi_ * in + a1_hi_ * in_1 + b1_hi_ * out_1;
     }
 };
