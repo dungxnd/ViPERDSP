@@ -4,21 +4,21 @@
 
 class IIR_1st {
 public:
-    IIR_1st();
+    IIR_1st() = default;
 
-    void Mute();
+    void Mute() noexcept;
 
-    void SetCoefficients(float b0, float b1, float a1);
-    void SetHighPassFilterBW(float frequency, uint32_t sampling_rate);
-    void SetLowPassFilterBW(float frequency, uint32_t sampling_rate);
+    void SetCoefficients(float b0, float b1, float a1) noexcept;
+    void SetHighPassFilterBW(float frequency, uint32_t sampling_rate) noexcept;
+    void SetLowPassFilterBW(float frequency, uint32_t sampling_rate) noexcept;
 
-    float b0_;
-    float b1_;
-    float a1_;
-    float prev_sample_;
+    float b0_{0.0f};
+    float b1_{0.0f};
+    float a1_{0.0f};
+    float prev_sample_{0.0f};
 };
 
-inline float Filter(IIR_1st *filter, float sample) {
+[[nodiscard]] inline float Filter(IIR_1st *filter, float sample) noexcept {
     const float hist = sample * filter->b1_;
     sample = filter->prev_sample_ + sample * filter->b0_;
     filter->prev_sample_ = sample * filter->a1_ + hist;
