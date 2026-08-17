@@ -135,6 +135,7 @@ constexpr int kParamTubeSimulatorModel     = 0x10251;
 constexpr int kParamTubeSimulatorDrive     = 0x10252;
 constexpr int kParamTubeSimulatorMix       = 0x10253;
 constexpr int kParamTubeSimulatorHpfCutoff = 0x10254;  // int Hz [20 – 250]; default 120
+constexpr int kParamTubeSimulatorMode      = 0x10255;  // 0 = static, 1 = WDF
 
 constexpr int kParamAnalogXEnable = 0x10260;
 constexpr int kParamAnalogXMode = 0x10261;
@@ -454,12 +455,14 @@ struct TubeSimulatorParams {
     float drive      = 2.0f;   // Input gain [1.0 – 10.0]
     float mix        = 0.3f;   // Wet/dry ratio [0.0 – 1.0]
     float hpf_cutoff = 120.0f; // HPF cutoff frequency [20 – 250 Hz]
+    int   mode       = 0;      // 0 = static, 1 = WDF
 
     bool operator==(const TubeSimulatorParams &other) const {
         if (!enable && !other.enable) return true;
         constexpr float kEps = 1e-4f;
         return enable == other.enable
             && model == other.model
+            && mode == other.mode
             && std::abs(drive      - other.drive)      < kEps
             && std::abs(mix        - other.mix)        < kEps
             && std::abs(hpf_cutoff - other.hpf_cutoff) < kEps;
