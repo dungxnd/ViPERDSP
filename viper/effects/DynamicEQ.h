@@ -2,6 +2,7 @@
 
 #include "../utils/MultiBiquad.h"
 #include <array>
+#include <cstdint>
 
 class DynamicEQ {
 public:
@@ -26,34 +27,33 @@ public:
 
 private:
     struct BandParam {
-        float frequency;
-        float q;
-        float target_gain_db;
-        float threshold_db;
-        float attack_ms;
-        float release_ms;
-        MultiBiquad::FilterType filter_type;
+        float frequency{1000.0f};
+        float q{1.0f};
+        float target_gain_db{0.0f};
+        float threshold_db{-24.0f};
+        float attack_ms{10.0f};
+        float release_ms{100.0f};
+        MultiBiquad::FilterType filter_type{MultiBiquad::FilterType::PEAK};
     };
 
     struct BandState {
-        double envelope_l;
-        double envelope_r;
-        double smoothed_gain_db;
-        float last_applied_gain_db;
-        double attack_coeff;
-        double release_coeff;
+        double envelope_l{0.0};
+        double envelope_r{0.0};
+        double smoothed_gain_db{0.0};
+        float  last_applied_gain_db{0.0f};
+        double attack_coeff{0.0};
+        double release_coeff{0.0};
     };
 
-    bool enable_;
+    bool enable_{false};
 
     uint32_t sampling_rate_;
-    uint32_t band_count_;
+    uint32_t band_count_{0};
 
-    std::array<BandParam, kMaxBands> params_;
-    std::array<BandState, kMaxBands> state_;
-
-    std::array<MultiBiquad, kMaxBands> apply_l_;
-    std::array<MultiBiquad, kMaxBands> apply_r_;
+    std::array<BandParam,    kMaxBands> params_{};
+    std::array<BandState,    kMaxBands> state_{};
+    std::array<MultiBiquad,  kMaxBands> apply_l_{};
+    std::array<MultiBiquad,  kMaxBands> apply_r_{};
 
     void RecalcAttackRelease(uint32_t band);
     void ConfigureApplicationFilter(uint32_t band, float gain_db);
