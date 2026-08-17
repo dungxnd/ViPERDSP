@@ -3,6 +3,7 @@
 #include "../utils/MultiBiquad.h"
 #include "../utils/WaveBuffer.h"
 #include <array>
+#include <cstdint>
 
 class DiffSurround {
 public:
@@ -19,15 +20,15 @@ public:
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
-    bool enable_;
-    bool reverse_;
+    bool enable_{false};
+    bool reverse_{false};
 
     uint32_t sampling_rate_;
 
-    float delay_time_;
-    float wet_dry_mix_;
-    float lp_cutoff_;
+    float delay_time_{0.0f};
+    float wet_dry_mix_{1.0f};
+    float lp_cutoff_{0.0f};
 
     std::array<WaveBuffer, 2> buffers_;
-    MultiBiquad lp_filter_;
+    MultiBiquad lp_filter_{};
 };
