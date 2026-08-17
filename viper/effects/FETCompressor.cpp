@@ -1,31 +1,25 @@
 #include "FETCompressor.h"
 #include "../constants.h"
-#include <cmath>
 #include <algorithm>
+#include <cmath>
 
+namespace {
 // Minimum values to prevent denormals / division by zero
-static constexpr float EPSILON_LIN = 1e-6f;
-static constexpr float EPSILON_SQ  = 1e-12f;
+constexpr float  kEpsilonLin = 1e-6f;
+constexpr float  kEpsilonSq  = 1e-12f;
+// ln(10) / 20  — converts dB to natural-log domain
+constexpr float  kDb2Ln      = 2.302585092994046f / 20.0f;
+} // namespace
 
-float FETCompressor::CalculateAlpha(const uint32_t sampling_rate, const float time_seconds) {
+[[nodiscard]] float FETCompressor::CalculateAlpha(
+    const uint32_t sampling_rate, const float time_seconds
+) noexcept {
     if (time_seconds <= 0.0f) return 1.0f;
     return 1.0f - std::exp(-1.0f / (time_seconds * static_cast<float>(sampling_rate)));
 }
 
-FETCompressor::FETCompressor() :
-    enable_(true),
-    auto_knee_(true),
-    auto_gain_(true),
-    auto_attack_(true),
-    auto_release_(true),
-    no_clip_(true),
-    sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE),
-    attack_raw_(0.514679f),
-    release_raw_(0.384311f),
-    crest_raw_(0.615689f),
-    adapt_raw_(0.660964f),
-    knee_multi_(2.0f) {
-    
+FETCompressor::FETCompressor()
+    : sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE) {
     SetThreshold(0.0f);
     SetRatio(0.0f);
     SetKnee(0.0f);
@@ -40,27 +34,28 @@ FETCompressor::FETCompressor() :
     Reset();
 }
 
-void FETCompressor::Reset() {
-    param_smoothing_coeff_ = CalculateAlpha(sampling_rate_, 0.05f); // 50ms smoothing
+void FETCompressor::Reset() noexcept {
+    param_smoothing_coeff_ = CalculateAlpha(sampling_rate_, 0.05f); // 50 ms smoothing
     smoothed_threshold_ln_ = target_threshold_ln_;
     smoothed_gain_ln_      = target_gain_ln_;
     smoothed_knee_ln_      = target_knee_ln_;
 
     gr_release_stage_    = 0.0f;
     gr_attack_stage_     = 0.0f;
-    running_peak_sq_     = EPSILON_SQ;
-    running_rms_sq_      = EPSILON_SQ;
+    running_peak_sq_     = kEpsilonSq;
+    running_rms_sq_      = kEpsilonSq;
     adaptive_gain_state_ = 0.0f;
 }
 
-void FETCompressor::Process(float *samples, const uint32_t size) {
+void FETCompressor::Process(float *samples, const uint32_t size) noexcept {
     if (!enable_ || size == 0 || samples == nullptr) return;
 
     for (uint32_t i = 0; i < size * 2; i += 2) {
         // Linked stereo sidechain: maximum absolute amplitude
-        const double in_l = std::abs(samples[i]);
-        const double in_r = std::abs(samples[i + 1]);
-        const double sidechain_in = std::fmax(in_l, in_r);
+        const double sidechain_in = std::max(
+            std::abs(static_cast<double>(samples[i])),
+            std::abs(static_cast<double>(samples[i + 1]))
+        );
 
         const double gain_multiplier = ProcessSidechain(sidechain_in);
 
@@ -69,15 +64,14 @@ void FETCompressor::Process(float *samples, const uint32_t size) {
 
         // Continuous parameter smoothing
         smoothed_threshold_ln_ += (target_threshold_ln_ - smoothed_threshold_ln_) * param_smoothing_coeff_;
-        smoothed_gain_ln_      += (target_gain_ln_ - smoothed_gain_ln_) * param_smoothing_coeff_;
-        smoothed_knee_ln_      += (target_knee_ln_ - smoothed_knee_ln_) * param_smoothing_coeff_;
+        smoothed_gain_ln_      += (target_gain_ln_      - smoothed_gain_ln_)      * param_smoothing_coeff_;
+        smoothed_knee_ln_      += (target_knee_ln_      - smoothed_knee_ln_)      * param_smoothing_coeff_;
     }
 }
 
-double FETCompressor::ProcessSidechain(const double in) {
+double FETCompressor::ProcessSidechain(const double in) noexcept {
     float in_lin = static_cast<float>(in);
-    float in2 = in_lin * in_lin;
-    if (in2 < EPSILON_SQ) in2 = EPSILON_SQ;
+    float in2 = std::max(in_lin * in_lin, kEpsilonSq);
 
     // 1. Crest Factor Detection (Peak vs RMS)
     running_rms_sq_ += rms_coeff_ * (in2 - running_rms_sq_);
@@ -87,12 +81,11 @@ double FETCompressor::ProcessSidechain(const double in) {
         running_peak_sq_ += peak_coeff_ * (in2 - running_peak_sq_);
     }
 
-    float crest_ratio = running_peak_sq_ / (running_rms_sq_ + EPSILON_SQ);
-    if (crest_ratio < 1.0f) crest_ratio = 1.0f;
+    const float crest_ratio = std::max(running_peak_sq_ / (running_rms_sq_ + kEpsilonSq), 1.0f);
 
     // 2. Program-Dependent Dynamic Attack & Release
-    float cur_att_coeff = attack_coeff_;
-    float cur_rel_coeff = release_coeff_;
+    float cur_att_coeff   = attack_coeff_;
+    float cur_rel_coeff   = release_coeff_;
     float adaptive_att_time = attack_time_sec_;
 
     if (auto_attack_) {
@@ -101,28 +94,27 @@ double FETCompressor::ProcessSidechain(const double in) {
     }
 
     if (auto_release_) {
-        const float adaptive_rel_time = std::fmax(
-            (2.0f * max_release_time_) / crest_ratio - adaptive_att_time, 
-            0.001f
+        const float adaptive_rel_time = std::max(
+            (2.0f * max_release_time_) / crest_ratio - adaptive_att_time, 0.001f
         );
         cur_rel_coeff = CalculateAlpha(sampling_rate_, adaptive_rel_time);
     }
 
     // 3. Log-Domain Static Gain Computer (Giannoulis Eq. 4)
-    const float log_input = std::log(std::fmax(in_lin, EPSILON_LIN));
-    const float diff = log_input - smoothed_threshold_ln_;
+    const float log_input = std::log(std::max(in_lin, kEpsilonLin));
+    const float diff      = log_input - smoothed_threshold_ln_;
 
-    float knee_width = smoothed_knee_ln_;
+    float knee_width     = smoothed_knee_ln_;
     float effective_slope = ratio_slope_;
 
     if (auto_knee_) {
         const float half_thresh = smoothed_threshold_ln_ * 0.5f;
-        const float knee_base = adaptive_gain_state_ + half_thresh;
-        knee_width = std::fmax(-(knee_base * knee_multi_), 0.0f);
+        const float knee_base   = adaptive_gain_state_ + half_thresh;
+        knee_width = std::max(-(knee_base * knee_multi_), 0.0f);
     }
 
     const float half_knee = knee_width * 0.5f;
-    float gain_reduction = 0.0f; // Positive attenuation magnitude in ln domain
+    float gain_reduction  = 0.0f; // Positive attenuation magnitude in ln domain
 
     if (half_knee > 1e-4f) {
         // Soft Knee Characteristic
@@ -142,8 +134,8 @@ double FETCompressor::ProcessSidechain(const double in) {
     }
 
     // 4. Giannoulis Smooth Decoupled Ballistics Detector (AES Eq. 17)
-    // Stage 1: Release envelope follower (releases towards target gain_reduction)
-    gr_release_stage_ = std::fmax(
+    // Stage 1: Release envelope follower
+    gr_release_stage_ = std::max(
         gain_reduction,
         gr_release_stage_ + cur_rel_coeff * (gain_reduction - gr_release_stage_)
     );
@@ -154,12 +146,12 @@ double FETCompressor::ProcessSidechain(const double in) {
 
     // 5. Adaptive Make-Up Gain & Output Scaling
     const float half_thresh_gr = smoothed_threshold_ln_ * 0.5f;
-    const float adapt_target = -smoothed_gr - half_thresh_gr - adaptive_gain_state_;
+    const float adapt_target   = -smoothed_gr - half_thresh_gr - adaptive_gain_state_;
     adaptive_gain_state_ += adapt_target * adapt_coeff_;
 
     if (auto_gain_) {
         float makeup_gain = half_thresh_gr + adaptive_gain_state_;
-        
+
         if (no_clip_) {
             const float output_level_ln = log_input - smoothed_gr - makeup_gain;
             if (output_level_ln > 0.0f) {
@@ -167,117 +159,107 @@ double FETCompressor::ProcessSidechain(const double in) {
                 adaptive_gain_state_ = output_level_ln;
             }
         }
-        return std::exp(-smoothed_gr - makeup_gain);
+        return std::exp(static_cast<double>(-smoothed_gr - makeup_gain));
     }
 
-    return std::exp(smoothed_gain_ln_ - smoothed_gr);
+    return std::exp(static_cast<double>(smoothed_gain_ln_ - smoothed_gr));
 }
 
 // ---------------- Parameter Setters ----------------
 
-void FETCompressor::SetEnable(const bool enable) {
+void FETCompressor::SetEnable(const bool enable) noexcept {
     enable_ = enable;
 }
 
-void FETCompressor::SetThreshold(const float value) {
-    // Value in [0.0, 1.0] -> 0 dB to -60 dB
+void FETCompressor::SetThreshold(const float value) noexcept {
     SetThresholdDb(value * -60.0f);
 }
 
-void FETCompressor::SetThresholdDb(const float db) {
-    // ln(10^(dB / 20)) = dB * ln(10) / 20
-    target_threshold_ln_ = db * (2.302585092994046f / 20.0f);
+void FETCompressor::SetThresholdDb(const float db) noexcept {
+    target_threshold_ln_ = db * kDb2Ln;
 }
 
-void FETCompressor::SetRatio(const float value) {
+void FETCompressor::SetRatio(const float value) noexcept {
     if (value > 1.0f) {
-        // Provided as standard ratio (e.g. 4.0 for 4:1)
         ratio_slope_ = 1.0f - (1.0f / value);
     } else {
-        // Provided as normalized slope factor in [0.0, 1.0]
-        ratio_slope_ = std::fmax(0.0f, std::fmin(value, 1.0f));
+        ratio_slope_ = std::clamp(value, 0.0f, 1.0f);
     }
 }
 
-void FETCompressor::SetKnee(const float value) {
-    // Value in [0.0, 1.0] -> 0 dB to 60 dB
+void FETCompressor::SetKnee(const float value) noexcept {
     SetKneeWidthDb(value * 60.0f);
 }
 
-void FETCompressor::SetKneeWidthDb(const float db) {
-    target_knee_ln_ = db * (2.302585092994046f / 20.0f);
+void FETCompressor::SetKneeWidthDb(const float db) noexcept {
+    target_knee_ln_ = db * kDb2Ln;
 }
 
-void FETCompressor::SetKneeAuto(const bool enable) {
+void FETCompressor::SetKneeAuto(const bool enable) noexcept {
     auto_knee_ = enable;
 }
 
-void FETCompressor::SetGain(const float value) {
-    // Value in [0.0, 1.0] -> 0 dB to +60 dB
+void FETCompressor::SetGain(const float value) noexcept {
     SetGainDb(value * 60.0f);
 }
 
-void FETCompressor::SetGainDb(const float db) {
-    target_gain_ln_ = db * (2.302585092994046f / 20.0f);
+void FETCompressor::SetGainDb(const float db) noexcept {
+    target_gain_ln_ = db * kDb2Ln;
 }
 
-void FETCompressor::SetGainAuto(const bool enable) {
+void FETCompressor::SetGainAuto(const bool enable) noexcept {
     auto_gain_ = enable;
 }
 
-void FETCompressor::SetAttack(const float value) {
-    attack_raw_ = value;
-    // Map normalized [0, 1] to ~100us -> ~200ms
+void FETCompressor::SetAttack(const float value) noexcept {
+    attack_raw_      = value;
     attack_time_sec_ = std::exp(value * 7.600903f - 9.21034f);
     attack_coeff_    = CalculateAlpha(sampling_rate_, attack_time_sec_);
 }
 
-void FETCompressor::SetAttackAuto(const bool enable) {
+void FETCompressor::SetAttackAuto(const bool enable) noexcept {
     auto_attack_ = enable;
 }
 
-void FETCompressor::SetRelease(const float value) {
-    release_raw_ = value;
-    // Map normalized [0, 1] to ~5ms -> ~2000ms
+void FETCompressor::SetRelease(const float value) noexcept {
+    release_raw_      = value;
     release_time_sec_ = std::exp(value * 5.991465f - 5.298317f);
     release_coeff_    = CalculateAlpha(sampling_rate_, release_time_sec_);
 }
 
-void FETCompressor::SetReleaseAuto(const bool enable) {
+void FETCompressor::SetReleaseAuto(const bool enable) noexcept {
     auto_release_ = enable;
 }
 
-void FETCompressor::SetKneeMulti(const float value) {
+void FETCompressor::SetKneeMulti(const float value) noexcept {
     knee_multi_ = value * 4.0f;
 }
 
-void FETCompressor::SetMaxAttack(const float value) {
+void FETCompressor::SetMaxAttack(const float value) noexcept {
     max_attack_time_ = std::exp(value * 7.600903f - 9.21034f);
 }
 
-void FETCompressor::SetMaxRelease(const float value) {
+void FETCompressor::SetMaxRelease(const float value) noexcept {
     max_release_time_ = std::exp(value * 5.991465f - 5.298317f);
 }
 
-void FETCompressor::SetCrest(const float value) {
-    crest_raw_ = value;
-    // Fast peak decay (~10ms) and slower RMS integration (~50ms)
-    float base_time = std::exp(value * 5.991465f - 5.298317f);
+void FETCompressor::SetCrest(const float value) noexcept {
+    crest_raw_  = value;
+    const float base_time = std::exp(value * 5.991465f - 5.298317f);
     peak_coeff_ = CalculateAlpha(sampling_rate_, base_time * 0.2f);
     rms_coeff_  = CalculateAlpha(sampling_rate_, base_time);
 }
 
-void FETCompressor::SetAdapt(const float value) {
-    adapt_raw_ = value;
-    float adapt_time = std::exp(value * 1.386294f);
-    adapt_coeff_ = CalculateAlpha(sampling_rate_, adapt_time);
+void FETCompressor::SetAdapt(const float value) noexcept {
+    adapt_raw_   = value;
+    adapt_coeff_ = CalculateAlpha(sampling_rate_, std::exp(value * 1.386294f));
 }
 
-void FETCompressor::SetNoClip(const bool enable) {
+void FETCompressor::SetNoClip(const bool enable) noexcept {
     no_clip_ = enable;
 }
 
-void FETCompressor::SetSamplingRate(const uint32_t sampling_rate) {
+void FETCompressor::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate == 0) return;
     sampling_rate_ = sampling_rate;
     SetAttack(attack_raw_);
