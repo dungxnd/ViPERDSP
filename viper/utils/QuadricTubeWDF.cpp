@@ -13,6 +13,7 @@ void QuadricTubeWDF::SetTubeModel(const TubeModel& model, double vdd, double rp,
     rp_ = rp;
     bias_ = bias;
     output_gain_ = output_gain;
+    bias_scale_ = std::sqrt(std::abs(bias_) / 1.5);
     output_scale_ = -1.0 / (vdd_ / 2.5);
 
     triode_.SetTubeModel(model);
@@ -26,8 +27,7 @@ double QuadricTubeWDF::Process(double sample) {
     if (!configured_) return 0.0;
 
     const double prev_last = last_processed_;
-    const double bias_scale = std::sqrt(std::abs(bias_) / 1.5);
-    double v_gk = sample * drive_factor_ * bias_scale + bias_;
+    double v_gk = sample * drive_factor_ * bias_scale_ + bias_;
     if (v_gk > 0.0) {
         v_gk = 0.5 * std::tanh(v_gk * 2.0);
     }

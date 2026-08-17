@@ -22,6 +22,7 @@ private:
     double output_scale_ = 0.0;
     double output_gain_ = 1.0;
     double drive_factor_ = 2.0;
+    double bias_scale_ = 1.0;
     TriodeWDF3Port triode_;
     double last_processed_ = 0.0;
     double prev_out_ = 0.0;

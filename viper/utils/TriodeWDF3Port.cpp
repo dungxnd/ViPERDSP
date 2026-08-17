@@ -55,11 +55,7 @@ void TriodeWDF3Port::Scatter() {
         b3_ = a3_ + (z3_ / z1_) * (a1_ - b1_);
         b2_ = a2_;
 
-        const double vpk = Vpk();
-        const double vgk = Vgk();
-        const double ip_deriv = kpg * vgk + 2.0 * kp2 * vpk + kp;
-
-        if (ip_deriv < 0.0) open_circuit = true;
+        if (b1_ < -eta) open_circuit = true;
     } else {
         open_circuit = true;
     }

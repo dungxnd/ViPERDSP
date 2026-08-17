@@ -30,6 +30,7 @@ private:
     double output_scale_  = 0.0;
     double output_gain_   = 1.0;   // Per-tube level-matching factor
     double drive_factor_  = 2.0;   // Input gain multiplier [1.0 – 10.0]; default 2.0
+    double bias_scale_    = 1.0;
     TubeModel tube_       = {};
 
     double k_A_       = 0.0, k_2A_      = 0.0, k_4A_      = 0.0;
