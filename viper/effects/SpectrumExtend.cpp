@@ -1,17 +1,10 @@
 #include "SpectrumExtend.h"
 #include "../constants.h"
+#include <array>
 
-static constexpr float kSpectrumHarmonics[10] = {
-    0.02f,
-    0.0f,
-    0.02f,
-    0.0f,
-    0.02f,
-    0.0f,
-    0.02f,
-    0.0f,
-    0.02f,
-    0.0f,
+static constexpr std::array<float, 10> kSpectrumHarmonics{
+    0.02f, 0.0f, 0.02f, 0.0f, 0.02f,
+    0.0f,  0.02f, 0.0f, 0.02f, 0.0f,
 };
 
 SpectrumExtend::SpectrumExtend() :

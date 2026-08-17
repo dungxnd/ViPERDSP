@@ -1,57 +1,26 @@
 #include "PsychoacousticBass.h"
 #include "../constants.h"
+#include <array>
 #include <cmath>
 
-static constexpr float kHarmonicOrder2[10] = {
-    0.0f,
-    1.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
+static constexpr std::array<float, 10> kHarmonicOrder2{
+    0.0f, 1.0f,  0.0f, 0.0f, 0.0f,
+    0.0f, 0.0f,  0.0f, 0.0f, 0.0f,
 };
 
-static constexpr float kHarmonicOrder3[10] = {
-    0.0f,
-    0.7f,
-    0.3f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
+static constexpr std::array<float, 10> kHarmonicOrder3{
+    0.0f, 0.7f,  0.3f, 0.0f, 0.0f,
+    0.0f, 0.0f,  0.0f, 0.0f, 0.0f,
 };
 
-static constexpr float kHarmonicOrder4[10] = {
-    0.0f,
-    0.5f,
-    0.3f,
-    0.2f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
+static constexpr std::array<float, 10> kHarmonicOrder4{
+    0.0f, 0.5f,  0.3f, 0.2f, 0.0f,
+    0.0f, 0.0f,  0.0f, 0.0f, 0.0f,
 };
 
-static constexpr float kHarmonicOrder5[10] = {
-    0.0f,
-    0.4f,
-    0.25f,
-    0.2f,
-    0.15f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
+static constexpr std::array<float, 10> kHarmonicOrder5{
+    0.0f, 0.4f,  0.25f, 0.2f, 0.15f,
+    0.0f, 0.0f,  0.0f,  0.0f, 0.0f,
 };
 
 PsychoacousticBass::PsychoacousticBass() :
@@ -183,26 +152,16 @@ void PsychoacousticBass::RefreshFilters() {
 }
 
 void PsychoacousticBass::ApplyHarmonicCoeffs() {
-    const float *coeffs;
+    const std::array<float, 10>* coeffs;
     switch (harmonic_order_) {
-        case 2:
-            coeffs = kHarmonicOrder2;
-            break;
-        case 3:
-            coeffs = kHarmonicOrder3;
-            break;
-        case 4:
-            coeffs = kHarmonicOrder4;
-            break;
-        case 5:
-            coeffs = kHarmonicOrder5;
-            break;
-        default:
-            coeffs = kHarmonicOrder3;
-            break;
+        case 2:  coeffs = &kHarmonicOrder2; break;
+        case 3:  coeffs = &kHarmonicOrder3; break;
+        case 4:  coeffs = &kHarmonicOrder4; break;
+        case 5:  coeffs = &kHarmonicOrder5; break;
+        default: coeffs = &kHarmonicOrder3; break;
     }
     harmonics_[0].Reset();
     harmonics_[1].Reset();
-    harmonics_[0].SetHarmonics(coeffs);
-    harmonics_[1].SetHarmonics(coeffs);
+    harmonics_[0].SetHarmonics(*coeffs);
+    harmonics_[1].SetHarmonics(*coeffs);
 }

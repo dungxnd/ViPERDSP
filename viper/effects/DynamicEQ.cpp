@@ -167,15 +167,12 @@ void DynamicEQ::SetBandFilterType(const uint32_t band, const int value) {
     MultiBiquad::FilterType resolved;
     switch (value) {
         case 0:
-        case MultiBiquad::PEAK:
             resolved = MultiBiquad::PEAK;
             break;
         case 1:
-        case MultiBiquad::LOW_SHELF:
             resolved = MultiBiquad::LOW_SHELF;
             break;
         case 2:
-        case MultiBiquad::HIGH_SHELF:
             resolved = MultiBiquad::HIGH_SHELF;
             break;
         default:
