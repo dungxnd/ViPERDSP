@@ -6,66 +6,105 @@ class FETCompressor {
 public:
     FETCompressor();
 
-    void Process(float *samples, uint32_t size);
-    void Reset();
+    // Main stereo interleaved processing: [L0, R0, L1, R1, ...]
+    void Process(float *samples, uint32_t size) noexcept;
+    void Reset() noexcept;
 
-    void SetEnable(bool enable);
-    void SetThreshold(float value);
-    void SetRatio(float value);
-    void SetKnee(float value);
-    void SetKneeAuto(bool enable);
-    void SetGain(float value);
-    void SetGainAuto(bool enable);
-    void SetAttack(float value);
-    void SetAttackAuto(bool enable);
-    void SetRelease(float value);
-    void SetReleaseAuto(bool enable);
-    void SetKneeMulti(float value);
-    void SetMaxAttack(float value);
-    void SetMaxRelease(float value);
-    void SetCrest(float value);
-    void SetAdapt(float value);
-    void SetNoClip(bool enable);
-    void SetSamplingRate(uint32_t sampling_rate);
+    // Enable / Disable
+    void SetEnable(bool enable) noexcept;
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+
+    // Threshold: normalized [0.0 (0 dB) to 1.0 (-60 dB)] or explicit dB [-60.0 to 0.0]
+    void SetThreshold(float value) noexcept;
+    void SetThresholdDb(float db) noexcept;
+
+    // Ratio: standard ratio >= 1.0 (e.g., 1.0 for 1:1, 4.0 for 4:1) or normalized slope in [0.0, 1.0)
+    void SetRatio(float value) noexcept;
+    // Explicit normalized slope [0.0 (1:1 / no compression) to 1.0 (inf:1 / limiter)]
+    void SetRatioSlope(float slope) noexcept;
+
+    // Knee Width: normalized [0.0 to 1.0] (maps to 0.0 to 60.0 dB) or explicit dB [0.0 to 60.0 dB]
+    void SetKnee(float value) noexcept;
+    void SetKneeWidthDb(float db) noexcept;
+    void SetKneeAuto(bool enable) noexcept;
+
+    // Manual Make-Up Gain: normalized [0.0 (0 dB) to 1.0 (+60 dB)] or explicit dB [0.0 to 60.0]
+    void SetGain(float value) noexcept;
+    void SetGainDb(float db) noexcept;
+    void SetGainAuto(bool enable) noexcept;
+
+    // Attack & Release (Normalized 0.0 to 1.0)
+    void SetAttack(float value) noexcept;
+    void SetAttackAuto(bool enable) noexcept;
+    void SetRelease(float value) noexcept;
+    void SetReleaseAuto(bool enable) noexcept;
+
+    // Dynamic Ballistics & Knee Tuning
+    void SetKneeMulti(float value) noexcept;
+    void SetMaxAttack(float value) noexcept;
+    void SetMaxRelease(float value) noexcept;
+    void SetCrest(float value) noexcept;
+    void SetAdapt(float value) noexcept;
+    void SetNoClip(bool enable) noexcept;
+
+    // Sampling Rate
+    void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    bool enable_;
-    bool auto_knee_;
-    bool auto_gain_;
-    bool auto_attack_;
-    bool auto_release_;
-    bool no_clip_;
+    // Core sidechain computation returning the linear gain multiplier
+    double ProcessSidechain(double in) noexcept;
+
+    // Helper to calculate one-pole filter coefficient (1 - e^(-1 / (tau * fs)))
+    [[nodiscard]] static float CalculateAlpha(uint32_t sampling_rate, float time_seconds) noexcept;
+
+    // State / Config flags
+    bool enable_{true};
+    bool auto_knee_{true};
+    bool auto_gain_{true};
+    bool auto_attack_{true};
+    bool auto_release_{true};
+    bool no_clip_{true};
 
     uint32_t sampling_rate_;
 
-    float attack_raw_;
-    float release_raw_;
-    float crest_raw_;
-    float adapt_raw_;
+    // Raw normalized control values
+    float attack_raw_{0.514679f};
+    float release_raw_{0.384311f};
+    float crest_raw_{0.615689f};
+    float adapt_raw_{0.660964f};
 
-    float smoothing_coeff_;
-    float release_smooth_gr_;
-    float attack_smooth_gr_;
-    float adaptive_gain_state_;
-    float smoothed_threshold_;
-    float threshold_;
-    float knee_;
-    float smoothed_gain_;
-    float gain_;
-    float ratio_;
-    float running_peak_;
-    float running_rms_;
-    float attack1_;
-    float attack2_;
-    float release1_;
-    float release2_;
-    float knee_multi_;
-    float max_attack_;
-    float max_release_;
-    float crest1_;
-    float crest2_;
-    float adapt1_;
-    float adapt2_;
+    // Target parameters in Natural Log (ln) domain
+    float target_threshold_ln_{0.0f};
+    float target_gain_ln_{0.0f};
+    float target_knee_ln_{0.0f};
+    float ratio_slope_{0.0f}; // CS = (1 - 1/R) in [0.0, 1.0]
 
-    double ProcessSidechain(double in);
+    // Smoothed parameters (zipper-noise prevention)
+    float smoothed_threshold_ln_{0.0f};
+    float smoothed_gain_ln_{0.0f};
+    float smoothed_knee_ln_{0.0f};
+    float param_smoothing_coeff_{0.0f};
+
+    // Giannoulis Smooth Decoupled Detector states (ln domain, positive GR)
+    float gr_release_stage_{0.0f};
+    float gr_attack_stage_{0.0f};
+
+    // Peak and RMS energy trackers for crest factor calculation
+    float running_peak_sq_{0.0f};
+    float running_rms_sq_{0.0f};
+    float rms_coeff_{0.0f};
+    float peak_coeff_{0.0f};
+
+    // Ballistics time constants & coefficients
+    float attack_time_sec_{0.0f};
+    float attack_coeff_{0.0f};
+    float release_time_sec_{0.0f};
+    float release_coeff_{0.0f};
+    float max_attack_time_{0.0f};
+    float max_release_time_{0.0f};
+
+    // Adaptive makeup gain & knee modulation
+    float knee_multi_{2.0f};
+    float adapt_coeff_{0.0f};
+    float adaptive_gain_state_{0.0f};
 };
