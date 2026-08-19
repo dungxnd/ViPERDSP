@@ -1,4 +1,5 @@
 #include "MultibandCompressor.h"
+#include <algorithm>
 #include <array>
 
 namespace {
