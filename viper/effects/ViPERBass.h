@@ -4,47 +4,53 @@
 #include "../utils/Polyphase.h"
 #include "../utils/Subwoofer.h"
 #include "../utils/WaveBuffer.h"
+#include <array>
+#include <cstdint>
 
 class ViPERBass {
 public:
-    enum ProcessMode {
-        NATURAL_BASS = 0,
-        PURE_BASS_PLUS = 1,
-        SUBWOOFER = 2,
+    enum class ProcessMode {
+        NaturalBass   = 0,
+        PureBasPlus   = 1,
+        Subwoofer     = 2,
+        // ALL_CAPS aliases for source compatibility
+        NATURAL_BASS  = NaturalBass,
+        PURE_BASS_PLUS = PureBasPlus,
+        SUBWOOFER     = Subwoofer,
     };
 
     ViPERBass();
 
-    void Process(float *samples, uint32_t size);
-    void Reset();
+    void Process(float *samples, uint32_t size) noexcept;
+    void Reset() noexcept;
 
-    void SetEnable(bool enable);
-    void SetProcessMode(ProcessMode mode);
-    void SetBassFactor(float value);
-    void SetFrequency(uint32_t value);
-    void SetAntiPop(bool enable);
-    void SetSamplingRate(uint32_t sampling_rate);
+    void SetEnable(bool enable) noexcept;
+    void SetProcessMode(ProcessMode mode) noexcept;
+    void SetBassFactor(float value) noexcept;
+    void SetFrequency(uint32_t value) noexcept;
+    void SetAntiPop(bool enable) noexcept;
+    void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    bool enable_;
+    bool enable_{false};
 
-    ProcessMode process_mode_;
+    ProcessMode process_mode_{ProcessMode::NaturalBass};
 
-    uint32_t sampling_rate_;
-    uint32_t frequency_;
+    uint32_t sampling_rate_{44100u};
+    uint32_t frequency_{60u};
 
-    float sampling_rate_period_;
-    float anti_pop_;
-    float bass_factor_;
-    float bass_factor_smoothed_;
-    float smoothing_coeff_;
+    float sampling_rate_period_{1.0f / 44100.0f};
+    float anti_pop_{0.0f};
+    float bass_factor_{0.0f};
+    float bass_factor_smoothed_{0.0f};
+    float smoothing_coeff_{0.0f};
 
-    float dc_block_coeff_;
-    float dc_x1_[2];
-    float dc_y1_[2];
+    float dc_block_coeff_{0.0f};
+    std::array<float, 2> dc_x1_{};
+    std::array<float, 2> dc_y1_{};
 
-    Polyphase polyphase_;
-    Biquad biquad_[2];
-    Subwoofer subwoofer_;
-    WaveBuffer wave_buffer_;
+    Polyphase           polyphase_;
+    std::array<Biquad, 2> biquad_{};
+    Subwoofer           subwoofer_;
+    WaveBuffer          wave_buffer_;
 };
