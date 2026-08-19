@@ -1,38 +1,28 @@
 #include "FIR.h"
+#include <algorithm>
 #include <cstdint>
-#include <cstring>
-
-FIR::FIR() :
-    has_coefficients_(false),
-    coeffs_size_(0),
-    block_length_(0) {}
 
 void FIR::FilterSamplesInterleaved(
-    float *samples, const uint32_t size, const uint32_t channels
-) {
+    float* samples, const uint32_t size, const uint32_t channels
+) noexcept {
     if (!has_coefficients_ || size == 0) return;
 
-    for (uint32_t i = 0; i < size; i++) {
+    for (uint32_t i = 0; i < size; ++i) {
         block_[i] = samples[i * channels];
     }
 
     if (block_length_ > size) {
-        memset(block_.data() + size, 0, (block_length_ - size) * sizeof(float));
+        std::fill(block_.begin() + size, block_.begin() + block_length_, 0.0f);
     }
 
-    memcpy(
-        offset_block_.data() + coeffs_size_ - 1,
-        block_.data(),
-        block_length_ * sizeof(float)
-    );
+    std::copy(block_.begin(), block_.begin() + block_length_,
+              offset_block_.begin() + coeffs_size_ - 1);
 
-    for (uint32_t i = 0; i < block_length_; i++) {
+    for (uint32_t i = 0; i < block_length_; ++i) {
         float sample = 0.0f;
-
-        for (uint32_t j = 0; j < coeffs_size_; j++) {
+        for (uint32_t j = 0; j < coeffs_size_; ++j) {
             sample += coeffs_[j] * offset_block_[coeffs_size_ + i - j - 1];
         }
-
         if (i < size) {
             samples[i * channels] = sample;
         }
@@ -40,40 +30,33 @@ void FIR::FilterSamplesInterleaved(
 
     if (coeffs_size_ > 1) {
         const uint32_t carry_count = coeffs_size_ - 1;
-        for (uint32_t i = 0; i < carry_count; i++) {
-            offset_block_[i] = block_[block_length_ - carry_count + i];
-        }
+        std::copy(block_.end() - carry_count, block_.end(), offset_block_.begin());
     }
 }
 
-void FIR::Reset() {
+void FIR::Reset() noexcept {
     if (coeffs_size_ + block_length_ > 0) {
-        memset(
-            offset_block_.data(), 0, (coeffs_size_ + block_length_ + 1) * sizeof(float)
-        );
+        std::fill(offset_block_.begin(),
+                  offset_block_.begin() + coeffs_size_ + block_length_ + 1, 0.0f);
     }
 }
 
 int FIR::LoadCoefficients(
-    const float *coeffs, const uint32_t coeffs_size, const uint32_t block_length
+    const float* coeffs, const uint32_t coeffs_size, const uint32_t block_length
 ) {
     if (coeffs == nullptr || coeffs_size == 0 || block_length == 0) return 0;
 
-    offset_block_ = std::vector<float>(coeffs_size + block_length + 1);
-    coeffs_ = std::vector<float>(coeffs_size);
-    block_ = std::vector<float>(block_length);
+    offset_block_.assign(coeffs_size + block_length + 1, 0.0f);
+    coeffs_.assign(coeffs, coeffs + coeffs_size);
+    block_.assign(block_length, 0.0f);
 
-    coeffs_size_ = coeffs_size;
+    coeffs_size_  = coeffs_size;
     block_length_ = block_length;
 
-    memcpy(coeffs_.data(), coeffs, coeffs_size * sizeof(float));
-
-    Reset();
     has_coefficients_ = true;
-
     return 1;
 }
 
-uint32_t FIR::GetBlockLength() const {
+uint32_t FIR::GetBlockLength() const noexcept {
     return block_length_;
 }

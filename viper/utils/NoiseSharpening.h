@@ -1,21 +1,22 @@
 #pragma once
 
 #include "IIR_1st.h"
+#include <array>
+#include <cstdint>
 
 class NoiseSharpening {
 public:
-    NoiseSharpening();
+    NoiseSharpening() noexcept;
 
-    void Process(float *buffer, uint32_t size);
-    void Reset();
-    void SetGain(float gain);
-    void SetSamplingRate(uint32_t sampling_rate);
+    void Process(float* buffer, uint32_t size) noexcept;
+    void Reset() noexcept;
+    void SetGain(float gain) noexcept;
+    void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
+    float    gain_{0.0f};
 
-    float gain_;
-    float in_[2];
-
-    IIR_1st filters_[2];
+    std::array<float,   2> in_{};
+    std::array<IIR_1st, 2> filters_;
 };

@@ -1,18 +1,17 @@
 #include "DepthSurround.h"
-#include "../constants.h"
 #include <cmath>
 
-DepthSurround::DepthSurround() {
-    SetSamplingRate(VIPER_DEFAULT_SAMPLING_RATE);
+DepthSurround::DepthSurround() noexcept {
+    SetSamplingRate(44100u);
     RefreshStrength(strength_);
 }
 
-void DepthSurround::Process(float* const samples, const uint32_t size) {
+void DepthSurround::Process(float* const samples, const uint32_t size) noexcept {
     if (!enable_) return;
 
     const float gain_r = strength_at_least500_ ? -gain_ : gain_;
 
-    for (uint32_t i = 0; i < size; i++) {
+    for (uint32_t i = 0; i < size; ++i) {
         const float sample_l = samples[2 * i];
         const float sample_r = samples[2 * i + 1];
 
@@ -23,21 +22,21 @@ void DepthSurround::Process(float* const samples, const uint32_t size) {
         const float r    = prev_[1] + sample_r;
         const float diff = (l - r) / 2.0f;
         const float avg  = (l + r) / 2.0f;
-        const auto avg_out = static_cast<float>(highpass_.ProcessSample(diff));
+        const auto  avg_out = static_cast<float>(highpass_.ProcessSample(diff));
 
         samples[2 * i]     = avg + (diff - avg_out);
         samples[2 * i + 1] = avg - (diff - avg_out);
     }
 }
 
-void DepthSurround::SetStrength(const uint32_t value) {
+void DepthSurround::SetStrength(const uint32_t value) noexcept {
     strength_ = value;
     RefreshStrength(value);
 }
 
-void DepthSurround::RefreshStrength(const uint32_t strength) {
+void DepthSurround::RefreshStrength(const uint32_t strength) noexcept {
     strength_at_least500_ = strength >= 500;
-    enable_ = strength != 0;
+    enable_ = (strength != 0);
     if (strength != 0) {
         const auto gain = static_cast<float>(
             std::pow(10.0, (strength / 1000.0 * 10.0 - 15.0) / 20.0)
@@ -48,7 +47,7 @@ void DepthSurround::RefreshStrength(const uint32_t strength) {
     }
 }
 
-void DepthSurround::SetSamplingRate(const uint32_t sampling_rate) {
+void DepthSurround::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     time_const_delay_[0].SetParameters(sampling_rate, 0.02f);
     time_const_delay_[1].SetParameters(sampling_rate, 0.014f);
     highpass_.SetHighPassParameter(800.0f, sampling_rate, -11.0, 0.72f);

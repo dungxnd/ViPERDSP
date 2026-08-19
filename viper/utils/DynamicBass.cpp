@@ -1,10 +1,8 @@
 #include "DynamicBass.h"
-#include "../constants.h"
 #include <algorithm>
 
-DynamicBass::DynamicBass()
-    : sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE) {
-    SetSamplingRate(VIPER_DEFAULT_SAMPLING_RATE);
+DynamicBass::DynamicBass() {
+    SetSamplingRate(sampling_rate_);
     high_freq_y_ = sampling_rate_ / 4;
     filter_x_.SetPassFilter(low_freq_x_, high_freq_x_);
     filter_y_.SetPassFilter(low_freq_y_, high_freq_y_);

@@ -22,7 +22,7 @@ private:
     uint32_t high_freq_x_{80};
     uint32_t low_freq_y_{40};
     uint32_t high_freq_y_{0};
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
 
     float q_peak_{0.0f};
     float bass_gain_{1.0f};
