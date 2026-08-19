@@ -24,7 +24,7 @@ uint32_t Convolver::Process(
 
             if (is_valid_cross_channel_) {
                 const float cc = cross_channel_;
-                for (uint32_t i = 0; i < n; i++) {
+                for (uint32_t i = 0; i < n; ++i) {
                     const float L = buf_ptr[i * 2];
                     const float R = buf_ptr[i * 2 + 1];
                     buf_ptr[i * 2]     = L + cc * (R - L);

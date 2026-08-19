@@ -1,8 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 
-typedef struct PFFFT_Setup PFFFT_Setup;
+using PFFFT_Setup = struct PFFFT_Setup;
 
 class PConvSingle {
 public:
@@ -42,15 +43,17 @@ private:
     uint32_t delay_line_index_ = 0;
     uint32_t input_fill_     = 0;
 
-    // All owned by pffft_aligned_malloc / pffft_aligned_free
+    // Scalar PFFFT buffers — allocated via pffft_aligned_malloc / pffft_aligned_free
     PFFFT_Setup* fft_setup_        = nullptr;
     float*       fft_work_         = nullptr;
-    float**      filter_segments_  = nullptr;
-    float**      input_history_    = nullptr;
     float*       overlap_buffer_   = nullptr;
     float*       fft_buffer_       = nullptr;
     float*       accum_buffer_     = nullptr;
     float*       mono_buffer_      = nullptr;
+
+    // Arrays of per-segment PFFFT-aligned float* — owned via unique_ptr<float*[]>
+    std::unique_ptr<float*[]> filter_segments_;
+    std::unique_ptr<float*[]> input_history_;
 
     void ConvChunk(float* buffer, bool interleaved, int channel, uint32_t n);
 };

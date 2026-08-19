@@ -65,7 +65,7 @@ private:
     bool auto_release_{true};
     bool no_clip_{true};
 
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
 
     // Raw normalized control values
     float attack_raw_{0.514679f};

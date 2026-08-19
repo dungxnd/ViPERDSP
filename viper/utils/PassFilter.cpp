@@ -1,9 +1,7 @@
 #include "PassFilter.h"
-#include "../constants.h"
 
 PassFilter::PassFilter()
-    : sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE),
-      filters_({IIR_NOrder_BW_LH(3), IIR_NOrder_BW_LH(3),
+    : filters_({IIR_NOrder_BW_LH(3), IIR_NOrder_BW_LH(3),
                 IIR_NOrder_BW_LH(1), IIR_NOrder_BW_LH(1)}) {
     Reset();
 }

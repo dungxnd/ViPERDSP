@@ -20,7 +20,7 @@ public:
 private:
     bool enable_{false};
 
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
 
     int x_low_{0};
     int x_high_{0};

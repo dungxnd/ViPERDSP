@@ -8,9 +8,9 @@ public:
     struct Channel {
         float lower_angle{0.0f};
         float upper_angle{0.0f};
-        float in[3]{};
-        float x[4]{};
-        float y[4]{};
+        std::array<float, 3> in{};
+        std::array<float, 4> x{};
+        std::array<float, 4> y{};
     };
 
     PolesFilter();
@@ -27,7 +27,7 @@ public:
 private:
     uint32_t lower_freq_{160};
     uint32_t upper_freq_{8000};
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
 
     std::array<Channel, 2> channels_{};
 };

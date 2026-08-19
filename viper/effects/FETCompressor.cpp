@@ -1,5 +1,4 @@
 #include "FETCompressor.h"
-#include "../constants.h"
 #include <algorithm>
 #include <cmath>
 
@@ -18,8 +17,7 @@ constexpr float kDb2Ln      = 2.302585092994046f / 20.0f;
     return 1.0f - std::exp(-1.0f / (time_seconds * static_cast<float>(sampling_rate)));
 }
 
-FETCompressor::FETCompressor()
-    : sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE) {
+FETCompressor::FETCompressor() {
     SetThreshold(0.0f);
     SetRatio(0.0f);
     SetKnee(0.0f);

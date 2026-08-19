@@ -1,10 +1,8 @@
 #include "DiffSurround.h"
-#include "../constants.h"
 #include <algorithm>
 
 DiffSurround::DiffSurround()
-    : sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE),
-      buffers_({WaveBuffer(1, 0x1000), WaveBuffer(1, 0x1000)}) {
+    : buffers_({WaveBuffer(1, 0x1000), WaveBuffer(1, 0x1000)}) {
     Reset();
 }
 

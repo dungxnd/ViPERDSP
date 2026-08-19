@@ -73,7 +73,7 @@ inline bool ReadWavFile(const char* const path, WavData& out) {
         if (std::fread(tmp.get(), sizeof(int16_t), total_samples, fp) != total_samples) {
             std::fclose(fp); return false;
         }
-        for (uint32_t i = 0; i < total_samples; i++) {
+        for (uint32_t i = 0; i < total_samples; ++i) {
             samples[i] = static_cast<float>(tmp[i]) / 32768.0f;
         }
     } else if (!is_float && bits_per_sample == 24) {
@@ -82,7 +82,7 @@ inline bool ReadWavFile(const char* const path, WavData& out) {
         if (std::fread(tmp.get(), 3, total_samples, fp) != total_samples) {
             std::fclose(fp); return false;
         }
-        for (uint32_t i = 0; i < total_samples; i++) {
+        for (uint32_t i = 0; i < total_samples; ++i) {
             int32_t val = tmp[i*3] << 8 | tmp[i*3+1] << 16 | tmp[i*3+2] << 24;
             val >>= 8;
             samples[i] = static_cast<float>(val) / 8388608.0f;
@@ -93,7 +93,7 @@ inline bool ReadWavFile(const char* const path, WavData& out) {
         if (std::fread(tmp.get(), sizeof(int32_t), total_samples, fp) != total_samples) {
             std::fclose(fp); return false;
         }
-        for (uint32_t i = 0; i < total_samples; i++) {
+        for (uint32_t i = 0; i < total_samples; ++i) {
             samples[i] = static_cast<float>(tmp[i]) / 2147483648.0f;
         }
     } else {

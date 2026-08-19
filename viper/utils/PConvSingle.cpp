@@ -10,7 +10,7 @@ PConvSingle::~PConvSingle() {
 void PConvSingle::Reset() {
     if (!instance_usable_) return;
 
-    for (uint32_t i = 0; i < segment_count_; i++) {
+    for (uint32_t i = 0; i < segment_count_; ++i) {
         std::fill_n(input_history_[i], fft_size_, 0.0f);
     }
     std::fill_n(overlap_buffer_, segment_size_, 0.0f);
@@ -53,7 +53,7 @@ void PConvSingle::ConvSegment(
 void PConvSingle::ConvChunk(
     float* const buffer, const bool interleaved, const int channel, const uint32_t n
 ) {
-    for (uint32_t i = 0; i < n; i++) {
+    for (uint32_t i = 0; i < n; ++i) {
         mono_buffer_[input_fill_ + i] =
             interleaved ? buffer[i * 2 + channel] : buffer[i];
     }
@@ -66,7 +66,7 @@ void PConvSingle::ConvChunk(
     pffft_transform(fft_setup_, fft_buffer_, input_history_[delay_line_index_], fft_work_, PFFFT_FORWARD);
 
     std::fill_n(accum_buffer_, fft_size_, 0.0f);
-    for (uint32_t k = 0; k < segment_count_; k++) {
+    for (uint32_t k = 0; k < segment_count_; ++k) {
         const uint32_t idx = (delay_line_index_ - k + segment_count_) % segment_count_;
         pffft_zconvolve_accumulate(fft_setup_, input_history_[idx], filter_segments_[k], accum_buffer_, 1.0f);
     }
@@ -77,11 +77,11 @@ void PConvSingle::ConvChunk(
     const float* output = fft_buffer_ + segment_size_ + input_fill_;
 
     if (interleaved) {
-        for (uint32_t i = 0; i < n; i++) {
+        for (uint32_t i = 0; i < n; ++i) {
             buffer[i * 2 + channel] = output[i] * scale;
         }
     } else {
-        for (uint32_t i = 0; i < n; i++) {
+        for (uint32_t i = 0; i < n; ++i) {
             buffer[i] = output[i] * scale;
         }
     }
@@ -152,15 +152,15 @@ uint32_t PConvSingle::ProcessKernel(const float* const kernel, const uint32_t ke
     std::fill_n(overlap_buffer_, segment_size_, 0.0f);
     std::fill_n(mono_buffer_,    segment_size_, 0.0f);
 
-    filter_segments_ = new float*[segment_count_];
-    input_history_   = new float*[segment_count_];
-    for (uint32_t i = 0; i < segment_count_; i++) {
+    filter_segments_ = std::make_unique<float*[]>(segment_count_);
+    input_history_   = std::make_unique<float*[]>(segment_count_);
+    for (uint32_t i = 0; i < segment_count_; ++i) {
         filter_segments_[i] = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
         input_history_[i]   = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
         std::fill_n(input_history_[i], fft_size_, 0.0f);
     }
 
-    for (uint32_t i = 0; i < segment_count_; i++) {
+    for (uint32_t i = 0; i < segment_count_; ++i) {
         std::fill_n(fft_buffer_, fft_size_, 0.0f);
         const uint32_t offset = i * segment_size_;
         const uint32_t count  = std::min(kernel_size - offset, segment_size_);
@@ -177,7 +177,7 @@ uint32_t PConvSingle::ProcessKernel(
 ) {
     auto* const scaled = static_cast<float*>(pffft_aligned_malloc(kernel_size * sizeof(float)));
     if (!scaled) return 0;
-    for (uint32_t i = 0; i < kernel_size; i++) {
+    for (uint32_t i = 0; i < kernel_size; ++i) {
         scaled[i] = kernel[i] * gain;
     }
     const uint32_t result = ProcessKernel(scaled, kernel_size);
@@ -187,19 +187,17 @@ uint32_t PConvSingle::ProcessKernel(
 
 void PConvSingle::ReleaseResources() {
     if (filter_segments_) {
-        for (uint32_t i = 0; i < segment_count_; i++) {
+        for (uint32_t i = 0; i < segment_count_; ++i) {
             pffft_aligned_free(filter_segments_[i]);
         }
-        delete[] filter_segments_;
-        filter_segments_ = nullptr;
+        filter_segments_.reset();
     }
 
     if (input_history_) {
-        for (uint32_t i = 0; i < segment_count_; i++) {
+        for (uint32_t i = 0; i < segment_count_; ++i) {
             pffft_aligned_free(input_history_[i]);
         }
-        delete[] input_history_;
-        input_history_ = nullptr;
+        input_history_.reset();
     }
 
     auto free_if = [](float*& p) {

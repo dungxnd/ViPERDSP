@@ -23,7 +23,7 @@ private:
     bool enable_{false};
     bool reverse_{false};
 
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
 
     float delay_time_{0.0f};
     float wet_dry_mix_{1.0f};

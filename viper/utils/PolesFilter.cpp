@@ -1,5 +1,4 @@
 #include "PolesFilter.h"
-#include "../constants.h"
 #include <numbers>
 
 namespace {
@@ -31,8 +30,7 @@ void FilterSide(
 }
 } // namespace
 
-PolesFilter::PolesFilter()
-    : sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE) {
+PolesFilter::PolesFilter() {
     Reset();
 }
 

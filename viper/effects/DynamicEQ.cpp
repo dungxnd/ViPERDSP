@@ -1,5 +1,4 @@
 #include "DynamicEQ.h"
-#include "../constants.h"
 #include <algorithm>
 #include <cmath>
 
@@ -9,8 +8,7 @@ constexpr float kOvershootRangeDb    = 12.0f;
 constexpr double kMinEnvelope        = 1e-20;
 } // namespace
 
-DynamicEQ::DynamicEQ()
-    : sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE) {
+DynamicEQ::DynamicEQ() {
     Reset();
 }
 

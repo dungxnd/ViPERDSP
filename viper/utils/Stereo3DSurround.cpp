@@ -8,7 +8,7 @@ void Stereo3DSurround::Process(float* const samples, const uint32_t size) const 
     const uint32_t pairs     = size / 2;
     const uint32_t remainder = size % 2;
 
-    for (uint32_t i = 0; i < pairs; i++) {
+    for (uint32_t i = 0; i < pairs; ++i) {
         const float a = coeff_left_  * (samples[4 * i]     + samples[4 * i + 1]);
         const float b = coeff_right_ * (samples[4 * i + 1] - samples[4 * i]);
         const float c = coeff_left_  * (samples[4 * i + 2] + samples[4 * i + 3]);

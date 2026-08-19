@@ -1,8 +1,6 @@
 #include "DynamicSystem.h"
-#include "../constants.h"
 
-DynamicSystem::DynamicSystem()
-    : sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE) {
+DynamicSystem::DynamicSystem() {
     dynamic_bass_.SetSamplingRate(sampling_rate_);
     dynamic_bass_.Reset();
 }

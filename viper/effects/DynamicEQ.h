@@ -47,7 +47,7 @@ private:
 
     bool enable_{false};
 
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
     uint32_t band_count_{0};
 
     std::array<BandParam,    kMaxBands> params_{};

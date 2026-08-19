@@ -14,7 +14,7 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
 
     std::array<IIR_NOrder_BW_LH, 4> filters_;
 };
