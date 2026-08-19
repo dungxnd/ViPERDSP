@@ -78,7 +78,7 @@ void Crossfeed::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     }
 }
 
-void Crossfeed::FilterSample(float *sample) noexcept {
+void Crossfeed::FilterSample(float* const sample) noexcept {
     lfs_.lo[0] = ApplyLoFilter(sample[0], lfs_.lo[0]);
     lfs_.lo[1] = ApplyLoFilter(sample[1], lfs_.lo[1]);
 

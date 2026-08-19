@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <vector>
 
 class MinPhaseIIRCoeffs {
 public:
@@ -26,8 +27,8 @@ private:
         double upper;
     };
 
-    uint32_t                    bands_{0};
-    std::unique_ptr<double[]>   coeffs_;
+    uint32_t             bands_{0};
+    std::vector<double>  coeffs_;
 
     [[nodiscard]] static FreqPair        Find_F1_F2(double center_freq, double bandwidth_octaves) noexcept;
     [[nodiscard]] static std::optional<double> SolveRoot(double coeff_a, double coeff_b, double coeff_c) noexcept;

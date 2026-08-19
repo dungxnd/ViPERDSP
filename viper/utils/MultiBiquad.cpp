@@ -23,10 +23,10 @@ void MultiBiquad::Reset() noexcept {
 void MultiBiquad::RefreshFilter(const FilterType type, const FilterParams& p) {
     using FT = FilterType;
 
-    const double gain_db     = p.gain_db;
-    const double frequency   = p.frequency;
-    const double sample_rate = static_cast<double>(p.sample_rate);
-    const double q_factor    = p.q_factor;
+    const auto gain_db     = p.gain_db;
+    const auto frequency   = p.frequency;
+    const auto sample_rate = static_cast<double>(p.sample_rate);
+    const auto q_factor    = p.q_factor;
 
     double gain;
     if (type == FT::Peak || type == FT::LowShelf || type == FT::HighShelf) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 class Crossfeed {
@@ -37,9 +38,9 @@ private:
     float gain_{0.0f};
 
     struct Lfs {
-        float asis[2]{};
-        float lo[2]{};
-        float hi[2]{};
+        std::array<float, 2> asis{};
+        std::array<float, 2> lo{};
+        std::array<float, 2> hi{};
     } lfs_{};
 
     Preset preset_{700, 45};

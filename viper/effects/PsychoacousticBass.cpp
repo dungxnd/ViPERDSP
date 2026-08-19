@@ -24,14 +24,14 @@ constexpr std::array<float, 10> kHarmonicOrder5{
 };
 
 // Index 0 unused; order N maps to index N (valid range 2–5).
-constexpr const std::array<float, 10>* kHarmonicTables[6] = {
+constexpr std::array<const std::array<float, 10>*, 6> kHarmonicTables{{
     nullptr,          // 0 — invalid
     nullptr,          // 1 — invalid
     &kHarmonicOrder2,
     &kHarmonicOrder3,
     &kHarmonicOrder4,
     &kHarmonicOrder5,
-};
+}};
 
 constexpr float kFilterQ = 0.717f;
 

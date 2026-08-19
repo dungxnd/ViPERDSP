@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 class Convolver {
 public:
@@ -43,8 +44,8 @@ private:
     uint32_t current_kernel_buffer_crc_ = 0;
     float    cross_channel_            = 0.0f;
 
-    std::string               kernel_file_path_;
-    std::unique_ptr<float[]>  kernel_buffer_;
+    std::string        kernel_file_path_;
+    std::vector<float> kernel_buffer_;
 
     PConvSingle kernel_ch1_;
     PConvSingle kernel_ch2_;

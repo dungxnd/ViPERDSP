@@ -3,9 +3,7 @@
 #include <cmath>
 #include <numbers>
 
-ViPERBassMono::ViPERBassMono()
-    : polyphase_(2),
-      wave_buffer_(1, 4096) {
+ViPERBassMono::ViPERBassMono() {
     biquad_.Reset();
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
     subwoofer_.SetBassGain(sampling_rate_, 0.0f);
@@ -91,7 +89,7 @@ void ViPERBassMono::Reset() noexcept {
     subwoofer_.SetBassGain(sampling_rate_, bass_factor_ * 2.5f);
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
 
-    const float sr_f       = static_cast<float>(sampling_rate_);
+    const auto sr_f        = static_cast<float>(sampling_rate_);
     sampling_rate_period_  = 1.0f / sr_f;
     anti_pop_              = 0.0f;
     smoothing_coeff_       = 1.0f - std::exp(-1.0f / (0.030f * sr_f));

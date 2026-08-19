@@ -1,8 +1,7 @@
 #include "DiffSurround.h"
 #include <algorithm>
 
-DiffSurround::DiffSurround()
-    : buffers_({WaveBuffer(1, 0x1000), WaveBuffer(1, 0x1000)}) {
+DiffSurround::DiffSurround() {
     Reset();
 }
 

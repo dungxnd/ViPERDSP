@@ -213,7 +213,7 @@ void MultibandCompressor::SetBandNoClip(const uint32_t band, const bool enable) 
 void MultibandCompressor::ConfigureCrossovers() noexcept {
     // Collect the 8 filter arrays updated per crossover into a flat list for
     // a single loop — avoids 8× repeated RefreshFilter call blocks.
-    MultiBiquad* const filter_sets[8] = {
+    const std::array<MultiBiquad*, 8> filter_sets{
         lowpass_la_.data(),  lowpass_lb_.data(),
         lowpass_ra_.data(),  lowpass_rb_.data(),
         highpass_la_.data(), highpass_lb_.data(),

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 using PFFFT_Setup = struct PFFFT_Setup;
 
@@ -51,9 +52,9 @@ private:
     float*       accum_buffer_     = nullptr;
     float*       mono_buffer_      = nullptr;
 
-    // Arrays of per-segment PFFFT-aligned float* — owned via unique_ptr<float*[]>
-    std::unique_ptr<float*[]> filter_segments_;
-    std::unique_ptr<float*[]> input_history_;
+    // Vectors of per-segment PFFFT-aligned float* — inner ptrs freed before clear()
+    std::vector<float*> filter_segments_;
+    std::vector<float*> input_history_;
 
     void ConvChunk(float* buffer, bool interleaved, int channel, uint32_t n);
 };

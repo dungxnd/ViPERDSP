@@ -1,5 +1,6 @@
 #include "DynamicEQ.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace {
@@ -18,12 +19,12 @@ void DynamicEQ::Process(float *samples, const uint32_t size) {
     const uint32_t frame_count = size * 2;
 
     for (uint32_t b = 0; b < band_count_; ++b) {
-        double attack_coeff  = state_[b].attack_coeff;
-        double release_coeff = state_[b].release_coeff;
-        double env_l         = state_[b].envelope_l;
-        double env_r         = state_[b].envelope_r;
-        double smoothed_gain = state_[b].smoothed_gain_db;
-        float  last_applied  = state_[b].last_applied_gain_db;
+        auto attack_coeff  = state_[b].attack_coeff;
+        auto release_coeff = state_[b].release_coeff;
+        auto env_l         = state_[b].envelope_l;
+        auto env_r         = state_[b].envelope_r;
+        auto smoothed_gain = state_[b].smoothed_gain_db;
+        auto last_applied  = state_[b].last_applied_gain_db;
         const float  target_gain = params_[b].target_gain_db;
         const double threshold   = static_cast<double>(params_[b].threshold_db);
 
@@ -133,11 +134,11 @@ void DynamicEQ::SetBandRelease(const uint32_t band, const float value) {
 }
 
 void DynamicEQ::SetBandFilterType(const uint32_t band, const int value) {
-    static constexpr MultiBiquad::FilterType kTypes[] = {
+    static constexpr std::array<MultiBiquad::FilterType, 3> kTypes{{
         MultiBiquad::FilterType::PEAK,
         MultiBiquad::FilterType::LOW_SHELF,
         MultiBiquad::FilterType::HIGH_SHELF,
-    };
+    }};
     params_[band].filter_type = (value >= 0 && value <= 2)
         ? kTypes[value]
         : MultiBiquad::FilterType::PEAK;
@@ -146,9 +147,9 @@ void DynamicEQ::SetBandFilterType(const uint32_t band, const int value) {
 }
 
 void DynamicEQ::RecalcAttackRelease(const uint32_t band) {
-    const double sr = static_cast<double>(sampling_rate_);
-    const double attack_sec  = static_cast<double>(params_[band].attack_ms)  / 1000.0;
-    const double release_sec = static_cast<double>(params_[band].release_ms) / 1000.0;
+    const auto sr = static_cast<double>(sampling_rate_);
+    const auto attack_sec  = static_cast<double>(params_[band].attack_ms)  / 1000.0;
+    const auto release_sec = static_cast<double>(params_[band].release_ms) / 1000.0;
 
     state_[band].attack_coeff  = (attack_sec  > 0.0) ? 1.0 - std::exp(-1.0 / (attack_sec  * sr)) : 1.0;
     state_[band].release_coeff = (release_sec > 0.0) ? 1.0 - std::exp(-1.0 / (release_sec * sr)) : 1.0;

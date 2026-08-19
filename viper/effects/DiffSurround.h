@@ -29,6 +29,6 @@ private:
     float wet_dry_mix_{1.0f};
     float lp_cutoff_{0.0f};
 
-    std::array<WaveBuffer, 2> buffers_;
+    std::array<WaveBuffer, 2> buffers_{WaveBuffer(1, 0x1000), WaveBuffer(1, 0x1000)};
     MultiBiquad lp_filter_{};
 };

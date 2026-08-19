@@ -1,4 +1,5 @@
 #include "Cure.h"
+#include <array>
 
 void Cure::Process(float *buffer, const uint32_t size) noexcept {
     if (!enabled_) return;
@@ -44,11 +45,11 @@ void Cure::SetFeedback(const float value) noexcept {
 }
 
 void Cure::SetPreset(const uint32_t value) noexcept {
-    static constexpr Crossfeed::Preset kPresets[] = {
+    static constexpr std::array<Crossfeed::Preset, 3> kPresets{{
         {650, 95},
         {700, 60},
         {700, 45},
-    };
+    }};
     if (value < 3) {
         crossfeed_.SetPreset(kPresets[value]);
     }

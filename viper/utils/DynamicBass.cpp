@@ -14,7 +14,7 @@ void DynamicBass::FilterSamples(float *samples, const uint32_t size) noexcept {
         for (uint32_t i = 0; i < size; ++i) {
             const float l = samples[2 * i];
             const float r = samples[2 * i + 1];
-            const float avg = static_cast<float>(low_pass_.ProcessSample(l + r));
+            const auto avg = static_cast<float>(low_pass_.ProcessSample(l + r));
             samples[2 * i]     = l + avg;
             samples[2 * i + 1] = r + avg;
         }

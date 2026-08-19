@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <span>
+#include <utility>
 
 static constexpr float kOutputScale = 0.8f;
 
@@ -59,7 +60,7 @@ void AnalogX::Reset() {
         h.Reset();
     }
 
-    const auto& m = kModels[static_cast<std::size_t>(processing_model_)];
+    const auto& m = kModels[static_cast<std::size_t>(std::to_underlying(processing_model_))];
     gain_ = m.gain;
     for (auto& h : harmonic_) {
         h.SetHarmonics(kAnalogXHarmonics);
@@ -95,8 +96,6 @@ void AnalogX::SetSamplingRate(const uint32_t sampling_rate) {
 }
 
 void AnalogX::SetProcessingModel(const int model) {
-    const auto clamped = static_cast<std::size_t>(
-        model < 0 ? 0 : model > 2 ? 2 : model
-    );
+    const auto clamped = static_cast<std::size_t>(std::clamp(model, 0, 2));
     SetProcessingModel(static_cast<ProcessingModel>(clamped));
 }

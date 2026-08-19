@@ -38,7 +38,7 @@ constexpr std::array<float, 31> kFreq31 = {
 } // anonymous namespace
 
 const double* MinPhaseIIRCoeffs::GetCoefficients() const noexcept {
-    return coeffs_.get();
+    return coeffs_.data();
 }
 
 float MinPhaseIIRCoeffs::GetIndexFrequency(const uint32_t index) const noexcept {
@@ -57,7 +57,7 @@ int MinPhaseIIRCoeffs::UpdateCoeffs(const uint32_t bands, const uint32_t samplin
     }
 
     bands_ = bands;
-    coeffs_ = std::make_unique<double[]>(bands * 4);
+    coeffs_.assign(bands * 4, 0.0);
 
     const float* band_freqs = nullptr;
     double bandwidth = 0.0;

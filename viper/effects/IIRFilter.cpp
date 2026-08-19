@@ -5,7 +5,7 @@
 IIRFilter::IIRFilter(const uint32_t bands) {
     if (bands == 10 || bands == 15 || bands == 25 || bands == 31) {
         bands_ = bands;
-        min_phase_iir_coeffs_.UpdateCoeffs(bands_, sampling_rate_);
+        [[maybe_unused]] const auto ok = min_phase_iir_coeffs_.UpdateCoeffs(bands_, sampling_rate_);
     }
     band_levels_with_q_.fill(kDefaultLevelQ);
     // buf_ and buf_index* already initialized by in-class member defaults.
@@ -66,7 +66,7 @@ void IIRFilter::SetBandCount(const uint32_t bands) {
     if (bands != 10 && bands != 15 && bands != 25 && bands != 31) return;
     if (bands_ == bands) return;
     bands_ = bands;
-    min_phase_iir_coeffs_.UpdateCoeffs(bands_, sampling_rate_);
+    [[maybe_unused]] const auto ok = min_phase_iir_coeffs_.UpdateCoeffs(bands_, sampling_rate_);
     band_levels_with_q_.fill(kDefaultLevelQ);
     Reset();
 }
@@ -88,7 +88,7 @@ void IIRFilter::SetSamplingRate(const uint32_t sampling_rate) {
     if (sampling_rate_ != sampling_rate) {
         sampling_rate_ = sampling_rate;
         if (bands_ != 0) {
-            min_phase_iir_coeffs_.UpdateCoeffs(bands_, sampling_rate);
+            [[maybe_unused]] const auto ok = min_phase_iir_coeffs_.UpdateCoeffs(bands_, sampling_rate);
         }
         Reset();
     }

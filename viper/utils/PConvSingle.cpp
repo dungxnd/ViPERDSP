@@ -152,8 +152,8 @@ uint32_t PConvSingle::ProcessKernel(const float* const kernel, const uint32_t ke
     std::fill_n(overlap_buffer_, segment_size_, 0.0f);
     std::fill_n(mono_buffer_,    segment_size_, 0.0f);
 
-    filter_segments_ = std::make_unique<float*[]>(segment_count_);
-    input_history_   = std::make_unique<float*[]>(segment_count_);
+    filter_segments_.resize(segment_count_, nullptr);
+    input_history_.resize(segment_count_, nullptr);
     for (uint32_t i = 0; i < segment_count_; ++i) {
         filter_segments_[i] = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
         input_history_[i]   = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
@@ -186,19 +186,11 @@ uint32_t PConvSingle::ProcessKernel(
 }
 
 void PConvSingle::ReleaseResources() {
-    if (filter_segments_) {
-        for (uint32_t i = 0; i < segment_count_; ++i) {
-            pffft_aligned_free(filter_segments_[i]);
-        }
-        filter_segments_.reset();
-    }
+    for (float* p : filter_segments_) { pffft_aligned_free(p); }
+    filter_segments_.clear();
 
-    if (input_history_) {
-        for (uint32_t i = 0; i < segment_count_; ++i) {
-            pffft_aligned_free(input_history_[i]);
-        }
-        input_history_.reset();
-    }
+    for (float* p : input_history_) { pffft_aligned_free(p); }
+    input_history_.clear();
 
     auto free_if = [](float*& p) {
         if (p) { pffft_aligned_free(p); p = nullptr; }

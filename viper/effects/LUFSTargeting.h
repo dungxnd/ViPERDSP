@@ -48,4 +48,6 @@ private:
 
     void ConfigureFilters() noexcept;
     void UpdateSmoothingCoeffs() noexcept;
+    void UpdateWindow(double gate_threshold) noexcept;
+    [[nodiscard]] double MeasureLUFS() const noexcept;
 };

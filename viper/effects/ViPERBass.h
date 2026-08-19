@@ -49,8 +49,14 @@ private:
     std::array<float, 2> dc_x1_{};
     std::array<float, 2> dc_y1_{};
 
-    Polyphase           polyphase_;
+    Polyphase           polyphase_{2};
     std::array<Biquad, 2> biquad_{};
     Subwoofer           subwoofer_;
-    WaveBuffer          wave_buffer_;
+    WaveBuffer          wave_buffer_{2, 4096};
+
+    void ShapeMix(float* samples, uint32_t i, float bass_l, float bass_r) noexcept;
+    void ApplyAntiPop(float& bass_l, float& bass_r) noexcept;
+    void ProcessNaturalBass(float* samples, uint32_t size) noexcept;
+    void ProcessPureBasPlus(float* samples, uint32_t size) noexcept;
+    void ProcessSubwoofer  (float* samples, uint32_t size) noexcept;
 };

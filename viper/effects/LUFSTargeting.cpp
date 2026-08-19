@@ -54,6 +54,32 @@ LUFSTargeting::LUFSTargeting() {
     step_size_   = window_size_ / 4;
 }
 
+void LUFSTargeting::UpdateWindow(const double gate_threshold) noexcept {
+    if (window_sample_count_ < window_size_) return;
+
+    const double mean_square =
+        window_accumulator_ / static_cast<double>(window_sample_count_);
+
+    if (mean_square > gate_threshold) {
+        window_power_[window_write_idx_] = mean_square;
+        window_write_idx_ = (window_write_idx_ + 1) % kMaxWindows;
+        if (window_count_ < kMaxWindows) ++window_count_;
+    }
+
+    const auto shift_samples = static_cast<double>(window_size_ - step_size_);
+    window_accumulator_  *= shift_samples / static_cast<double>(window_sample_count_);
+    window_sample_count_  = static_cast<uint32_t>(shift_samples);
+}
+
+double LUFSTargeting::MeasureLUFS() const noexcept {
+    if (window_count_ == 0) return -70.0;
+
+    double sum = 0.0;
+    for (uint32_t w = 0; w < window_count_; ++w) sum += window_power_[w];
+    const double gated_mean = sum / static_cast<double>(window_count_);
+    return (gated_mean > 1e-20) ? -0.691 + 10.0 * std::log10(gated_mean) : -70.0;
+}
+
 void LUFSTargeting::Process(float* const samples, const uint32_t size) noexcept {
     if (!enable_ || size == 0) return;
 
@@ -71,38 +97,13 @@ void LUFSTargeting::Process(float* const samples, const uint32_t size) noexcept 
 
         window_accumulator_ += kLeft * kLeft + kRight * kRight;
         ++window_sample_count_;
-        ++sample_counter_;
 
-        if (sample_counter_ >= step_size_) {
+        if (++sample_counter_ >= step_size_) {
             sample_counter_ = 0;
-
-            if (window_sample_count_ >= window_size_) {
-                const double mean_square =
-                    window_accumulator_ / static_cast<double>(window_sample_count_);
-
-                if (mean_square > gate_threshold) {
-                    window_power_[window_write_idx_] = mean_square;
-                    window_write_idx_ = (window_write_idx_ + 1) % kMaxWindows;
-                    if (window_count_ < kMaxWindows) ++window_count_;
-                }
-
-                const uint32_t shift_samples = window_size_ - step_size_;
-                const double ratio = static_cast<double>(shift_samples)
-                                     / static_cast<double>(window_sample_count_);
-                window_accumulator_  *= ratio;
-                window_sample_count_  = shift_samples;
-            }
+            UpdateWindow(gate_threshold);
         }
 
-        double measured_lufs = -70.0;
-        if (window_count_ > 0) {
-            double sum = 0.0;
-            for (uint32_t w = 0; w < window_count_; ++w) sum += window_power_[w];
-            const double gated_mean = sum / static_cast<double>(window_count_);
-            if (gated_mean > 1e-20) {
-                measured_lufs = -0.691 + 10.0 * std::log10(gated_mean);
-            }
-        }
+        const double measured_lufs = MeasureLUFS();
 
         const double desired_gain_db = std::clamp(
             static_cast<double>(target_lufs_) - measured_lufs,
@@ -114,7 +115,7 @@ void LUFSTargeting::Process(float* const samples, const uint32_t size) noexcept 
                              ? attack_coeff_ : release_coeff_;
         smoothed_gain_db_ += coeff * (desired_gain_db - smoothed_gain_db_);
 
-        const float gain_linear = static_cast<float>(
+        const auto gain_linear = static_cast<float>(
             std::pow(10.0, smoothed_gain_db_ / 20.0)
         );
         samples[i * 2]     *= gain_linear;
@@ -182,7 +183,7 @@ void LUFSTargeting::ConfigureFilters() noexcept {
 
 void LUFSTargeting::UpdateSmoothingCoeffs() noexcept {
     const auto [attack_ms, release_ms] = kSpeedTable[static_cast<size_t>(speed_)];
-    const double sr = static_cast<double>(sampling_rate_);
+    const auto sr = static_cast<double>(sampling_rate_);
     attack_coeff_  = 1.0 - std::exp(-1.0 / (sr * attack_ms  / 1000.0));
     release_coeff_ = 1.0 - std::exp(-1.0 / (sr * release_ms / 1000.0));
 }

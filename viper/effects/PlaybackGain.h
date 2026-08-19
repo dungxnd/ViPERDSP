@@ -2,6 +2,7 @@
 
 #include "../utils/Biquad.h"
 #include <cstdint>
+#include <numbers>
 
 class PlaybackGain {
 public:
@@ -20,7 +21,7 @@ private:
     static constexpr float  kWarmupSeconds = 0.4f;
     static constexpr float  kBandpassFreq  = 2200.0f;
     static constexpr float  kBandpassQ     = 0.33f;
-    static constexpr float  kLogCoeff      = 0.4342945f;  // log10(e)
+    static constexpr float  kLogCoeff      = std::numbers::log10e_v<float>;
 
     bool     enable_{false};
     uint32_t sampling_rate_{44100};

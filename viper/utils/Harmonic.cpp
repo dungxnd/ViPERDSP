@@ -19,7 +19,7 @@ double Harmonic::Process(const double sample) noexcept {
     const double prev_last = last_processed_;
 
     const double x = sample;
-    const float* c = coeffs_.data();
+    const auto* const c = coeffs_.data();
     double y       = static_cast<double>(c[10]);
 
     y = std::fma(x, y, static_cast<double>(c[9]));

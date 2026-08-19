@@ -2,15 +2,25 @@
 #include "../utils/Crc32.h"
 #include "../utils/WavReader.h"
 #include <algorithm>
+#include <cstddef>
 #include <vector>
 
 static constexpr int kConvSegmentSize = 0x1000;
+
+static void ApplyCrossChannel(float* const buf, const uint32_t n, const float cc) noexcept {
+    for (uint32_t i = 0; i < n; ++i) {
+        const float L = buf[i * 2];
+        const float R = buf[i * 2 + 1];
+        buf[i * 2]     = L + cc * (R - L);
+        buf[i * 2 + 1] = R + cc * (L - R);
+    }
+}
 
 uint32_t Convolver::Process(
     const float* const source, float* const dest, const uint32_t frame_size
 ) {
     if (enable_ && kernel_ch1_.InstanceUsable() && kernel_ch2_.InstanceUsable()) {
-        constexpr uint32_t seg = static_cast<uint32_t>(kConvSegmentSize);
+        constexpr auto seg = static_cast<uint32_t>(kConvSegmentSize);
         for (uint32_t off = 0; off < frame_size; off += seg) {
             const uint32_t n = std::min(frame_size - off, seg);
 
@@ -23,13 +33,7 @@ uint32_t Convolver::Process(
             kernel_ch2_.ConvolveInterleaved(buf_ptr, 1, n);
 
             if (is_valid_cross_channel_) {
-                const float cc = cross_channel_;
-                for (uint32_t i = 0; i < n; ++i) {
-                    const float L = buf_ptr[i * 2];
-                    const float R = buf_ptr[i * 2 + 1];
-                    buf_ptr[i * 2]     = L + cc * (R - L);
-                    buf_ptr[i * 2 + 1] = R + cc * (L - R);
-                }
+                ApplyCrossChannel(buf_ptr, n, cross_channel_);
             }
         }
     }
@@ -125,10 +129,10 @@ void Convolver::SetKernel(const float* const buf, const uint32_t size) {
 }
 
 void Convolver::SetKernelBuffer(const float* const buf, uint32_t size) {
-    if (!buf || size == 0 || !kernel_buffer_ || expected_size_ == 0) return;
+    if (!buf || size == 0 || kernel_buffer_.empty() || expected_size_ == 0) return;
     if (current_size_ >= expected_size_) return;
     size = std::min(size, expected_size_ - current_size_);
-    std::copy_n(buf, size, kernel_buffer_.get() + current_size_);
+    std::copy_n(buf, size, kernel_buffer_.data() + current_size_);
     current_size_ += size;
 }
 
@@ -167,13 +171,14 @@ void Convolver::PrepareKernelBuffer(
 ) {
     if (!reset) {
         if (ch_count - 1 < 2 && buf_size > 0) {
-            kernel_buffer_  = std::make_unique<float[]>(buf_size);
+            kernel_buffer_.assign(buf_size, 0.0f);
             expected_size_  = buf_size;
             current_size_   = 0;
             channel_count_  = ch_count;
         }
     } else {
-        kernel_buffer_.reset();
+        kernel_buffer_.clear();
+        kernel_buffer_.shrink_to_fit();
         expected_size_             = 0;
         current_size_              = 0;
         channel_count_             = 0;
@@ -188,13 +193,15 @@ void Convolver::PrepareKernelBuffer(
 void Convolver::CommitKernelBuffer(
     const uint32_t expected_size, const uint32_t expected_crc, const uint32_t kernel_id
 ) {
-    if (!kernel_buffer_ || expected_size_ != expected_size || current_size_ == 0) {
+    if (kernel_buffer_.empty() || expected_size_ != expected_size || current_size_ == 0) {
         ClearKernelBuffer();
         return;
     }
 
     const uint32_t calculated_crc =
-        Crc32(reinterpret_cast<const uint8_t*>(kernel_buffer_.get()), current_size_ * 4);
+        Crc32(reinterpret_cast<const uint8_t*>(  // NOLINT: Crc32 requires uint8_t*
+              reinterpret_cast<const std::byte*>(kernel_buffer_.data())),
+              current_size_ * 4);
     if (channel_count_ - 1 > 1 || calculated_crc != expected_crc
         || calculated_crc == current_kernel_buffer_crc_) {
         ClearKernelBuffer();
@@ -207,13 +214,13 @@ void Convolver::CommitKernelBuffer(
     bool loaded;
 
     if (channel_count_ == 1) {
-        const uint32_t ret1 = kernel_ch1_.LoadKernel(kernel_buffer_.get(), frames_per_channel, kConvSegmentSize);
-        const uint32_t ret2 = kernel_ch2_.LoadKernel(kernel_buffer_.get(), frames_per_channel, kConvSegmentSize);
+        const uint32_t ret1 = kernel_ch1_.LoadKernel(kernel_buffer_.data(), frames_per_channel, kConvSegmentSize);
+        const uint32_t ret2 = kernel_ch2_.LoadKernel(kernel_buffer_.data(), frames_per_channel, kConvSegmentSize);
         loaded = ret1 != 0 && ret2 != 0;
     } else {
         auto ch1 = std::make_unique<float[]>(frames_per_channel);
         auto ch2 = std::make_unique<float[]>(frames_per_channel);
-        for (uint32_t i = 0; i < frames_per_channel; i++) {
+        for (uint32_t i = 0; i < frames_per_channel; ++i) {
             ch1[i] = kernel_buffer_[i * 2];
             ch2[i] = kernel_buffer_[i * 2 + 1];
         }
@@ -239,7 +246,7 @@ void Convolver::CommitKernelBuffer(
 }
 
 void Convolver::ClearKernelBuffer() noexcept {
-    kernel_buffer_.reset();
+    kernel_buffer_.clear();
     expected_size_ = 0;
     current_size_  = 0;
     channel_count_ = 0;

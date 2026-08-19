@@ -5,7 +5,6 @@
 class MultiBiquad {
 public:
     enum class FilterType {
-        // PascalCase names (modern)
         LowPass,
         HighPass,
         BandPass,
@@ -14,15 +13,6 @@ public:
         Peak,
         LowShelf,
         HighShelf,
-        // ALL_CAPS aliases for backward compatibility
-        LOW_PASS   = LowPass,
-        HIGH_PASS  = HighPass,
-        BAND_PASS  = BandPass,
-        BAND_STOP  = BandStop,
-        ALL_PASS   = AllPass,
-        PEAK       = Peak,
-        LOW_SHELF  = LowShelf,
-        HIGH_SHELF = HighShelf,
     };
 
     // Class-scope aliases for callers using MultiBiquad::LOW_PASS style

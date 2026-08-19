@@ -1,8 +1,6 @@
 #include "PassFilter.h"
 
-PassFilter::PassFilter()
-    : filters_({IIR_NOrder_BW_LH(3), IIR_NOrder_BW_LH(3),
-                IIR_NOrder_BW_LH(1), IIR_NOrder_BW_LH(1)}) {
+PassFilter::PassFilter() {
     Reset();
 }
 

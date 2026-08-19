@@ -48,8 +48,8 @@ private:
     float dc_x1_{0.0f};
     float dc_y1_{0.0f};
 
-    Polyphase  polyphase_;
+    Polyphase  polyphase_{2};
     Biquad     biquad_;
     Subwoofer  subwoofer_;
-    WaveBuffer wave_buffer_;
+    WaveBuffer wave_buffer_{1, 4096};
 };
