@@ -56,5 +56,5 @@ private:
 
     std::unique_ptr<float[]> buffer_pool_;
     // Non-owning views into buffer_pool_ — valid as long as pool is alive.
-    std::array<float*, 24>   buffers_{};
+    std::array<float*, 24>   buffers_{}; // NOLINT(modernize-avoid-c-arrays) — non-owning view pointers
 };

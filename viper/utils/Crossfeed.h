@@ -41,7 +41,8 @@ private:
         std::array<float, 2> asis{};
         std::array<float, 2> lo{};
         std::array<float, 2> hi{};
-    } lfs_{};
+    };
+    Lfs lfs_{};
 
     Preset preset_{700, 45};
 

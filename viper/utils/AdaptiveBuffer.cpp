@@ -69,5 +69,5 @@ int AdaptiveBuffer::PushZero(const uint32_t length) {
 
 void AdaptiveBuffer::FlushBuffer() noexcept {
     offset_ = 0;
-    std::fill(buffer_.begin(), buffer_.end(), 0.0f);
+    std::ranges::fill(buffer_, 0.0f);
 }

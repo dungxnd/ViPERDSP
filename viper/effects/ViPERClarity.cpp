@@ -12,19 +12,20 @@ ViPERClarity::ViPERClarity() {
 void ViPERClarity::Process(float *samples, const uint32_t size) noexcept {
     if (!enable_) return;
 
+    using enum ClarityMode;
     switch (process_mode_) {
-        case ClarityMode::Natural: {
+        case Natural: {
             noise_sharpening_.Process(samples, size);
             break;
         }
-        case ClarityMode::Ozone: {
+        case Ozone: {
             for (uint32_t i = 0; i < size * 2; i += 2) {
                 samples[i]     = static_cast<float>(high_shelf_[0].Process(samples[i]));
                 samples[i + 1] = static_cast<float>(high_shelf_[1].Process(samples[i + 1]));
             }
             break;
         }
-        case ClarityMode::XHiFi: {
+        case XHiFi: {
             hifi_.Process(samples, size);
             break;
         }

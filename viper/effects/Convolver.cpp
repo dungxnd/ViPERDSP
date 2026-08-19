@@ -2,6 +2,7 @@
 #include "../utils/Crc32.h"
 #include "../utils/WavReader.h"
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <vector>
 
@@ -11,8 +12,8 @@ static void ApplyCrossChannel(float* const buf, const uint32_t n, const float cc
     for (uint32_t i = 0; i < n; ++i) {
         const float L = buf[i * 2];
         const float R = buf[i * 2 + 1];
-        buf[i * 2]     = L + cc * (R - L);
-        buf[i * 2 + 1] = R + cc * (L - R);
+        buf[i * 2]     = std::lerp(L, R, cc);
+        buf[i * 2 + 1] = std::lerp(R, L, cc);
     }
 }
 
@@ -198,10 +199,8 @@ void Convolver::CommitKernelBuffer(
         return;
     }
 
-    const uint32_t calculated_crc =
-        Crc32(reinterpret_cast<const uint8_t*>(  // NOLINT: Crc32 requires uint8_t*
-              reinterpret_cast<const std::byte*>(kernel_buffer_.data())),
-              current_size_ * 4);
+    const auto* const raw = reinterpret_cast<const std::byte*>(kernel_buffer_.data());
+    const uint32_t calculated_crc = Crc32(reinterpret_cast<const uint8_t*>(raw), current_size_ * 4);
     if (channel_count_ - 1 > 1 || calculated_crc != expected_crc
         || calculated_crc == current_kernel_buffer_crc_) {
         ClearKernelBuffer();

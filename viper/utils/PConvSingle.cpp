@@ -1,6 +1,7 @@
 #include "PConvSingle.h"
 #include "pffft.h"
 #include <algorithm>
+#include <bit>
 #include <cstring>
 
 PConvSingle::~PConvSingle() {
@@ -99,7 +100,7 @@ uint32_t PConvSingle::LoadKernel(
     const float* const kernel, const uint32_t kernel_size, const uint32_t segment_size
 ) {
     if (kernel && kernel_size >= 2 && segment_size >= 2
-        && (segment_size & (segment_size - 1)) == 0) {
+        && std::has_single_bit(segment_size)) {
         instance_usable_ = false;
         ReleaseResources();
         segment_size_ = segment_size;
@@ -118,7 +119,7 @@ uint32_t PConvSingle::LoadKernel(
     const uint32_t kernel_size, const uint32_t segment_size
 ) {
     if (kernel && kernel_size >= 2 && segment_size >= 2
-        && (segment_size & (segment_size - 1)) == 0) {
+        && std::has_single_bit(segment_size)) {
         instance_usable_ = false;
         ReleaseResources();
         segment_size_ = segment_size;

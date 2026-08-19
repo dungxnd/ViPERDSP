@@ -1,8 +1,9 @@
 #include "Polyphase.h"
+#include <array>
 
 namespace {
 
-constexpr float kPolyphaseCoefficients2[] = {
+constexpr std::array<float, 63> kPolyphaseCoefficients2 = {
     -0.002339f, -0.002073f, -0.001940f, -0.001675f, -0.001515f, -0.001329f, -0.001223f,
     -0.001037f, -0.000904f, -0.000851f, -0.000532f, -0.000851f, -0.000106f, -0.001010f,
     0.000558f,  -0.001435f, 0.001302f,  -0.001967f, 0.002259f,  -0.002605f, 0.003216f,
@@ -14,7 +15,7 @@ constexpr float kPolyphaseCoefficients2[] = {
     -0.004970f, -0.004253f, -0.003987f, -0.003482f, -0.003216f, -0.002871f, -0.002578f
 };
 
-constexpr float kPolyphaseCoefficientsOther[] = {
+constexpr std::array<float, 63> kPolyphaseCoefficientsOther = {
     -0.014194f, -0.002339f, -0.006220f, -0.019722f, -0.020626f, -0.014885f, -0.012240f,
     -0.012386f, -0.011801f, -0.011376f, -0.016293f, -0.018845f, -0.018327f, -0.013902f,
     -0.014951f, -0.015895f, -0.019044f, -0.017928f, -0.020094f, -0.017715f, -0.018845f,
@@ -32,11 +33,11 @@ Polyphase::Polyphase(const int coeff_type) :
     wave_buffer1_(2, 0x1000),
     wave_buffer2_(2, 0x1000) {
     if (coeff_type == 2) {
-        fir1_.LoadCoefficients(kPolyphaseCoefficients2, 63, 1008);
-        fir2_.LoadCoefficients(kPolyphaseCoefficients2, 63, 1008);
+        fir1_.LoadCoefficients(kPolyphaseCoefficients2.data(), 63, 1008);
+        fir2_.LoadCoefficients(kPolyphaseCoefficients2.data(), 63, 1008);
     } else {
-        fir1_.LoadCoefficients(kPolyphaseCoefficientsOther, 63, 1008);
-        fir2_.LoadCoefficients(kPolyphaseCoefficientsOther, 63, 1008);
+        fir1_.LoadCoefficients(kPolyphaseCoefficientsOther.data(), 63, 1008);
+        fir2_.LoadCoefficients(kPolyphaseCoefficientsOther.data(), 63, 1008);
     }
 }
 

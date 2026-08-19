@@ -21,7 +21,11 @@ void ViPERDDC::Process(float *samples, const uint32_t size) noexcept {
 
         for (uint32_t j = 0; j < arr_size_; j++) {
             const auto& c = (*coeffs_arr)[j];
-            const float b0 = c[0], b1 = c[1], b2 = c[2], a1 = c[3], a2 = c[4];
+            const float b0 = c[0];
+            const float b1 = c[1];
+            const float b2 = c[2];
+            const float a1 = c[3];
+            const float a2 = c[4];
 
             const float out_l = sample_l * b0 + x1_l_[j] * b1 + x2_l_[j] * b2
                                 + y1_l_[j] * a1 + y2_l_[j] * a2;
@@ -44,14 +48,14 @@ void ViPERDDC::Process(float *samples, const uint32_t size) noexcept {
 void ViPERDDC::Reset() noexcept {
     if (!set_coeffs_ok_ || arr_size_ == 0) return;
 
-    std::fill(x1_l_.begin(), x1_l_.end(), 0.0f);
-    std::fill(x1_r_.begin(), x1_r_.end(), 0.0f);
-    std::fill(x2_l_.begin(), x2_l_.end(), 0.0f);
-    std::fill(x2_r_.begin(), x2_r_.end(), 0.0f);
-    std::fill(y1_l_.begin(), y1_l_.end(), 0.0f);
-    std::fill(y1_r_.begin(), y1_r_.end(), 0.0f);
-    std::fill(y2_l_.begin(), y2_l_.end(), 0.0f);
-    std::fill(y2_r_.begin(), y2_r_.end(), 0.0f);
+    std::ranges::fill(x1_l_, 0.0f);
+    std::ranges::fill(x1_r_, 0.0f);
+    std::ranges::fill(x2_l_, 0.0f);
+    std::ranges::fill(x2_r_, 0.0f);
+    std::ranges::fill(y1_l_, 0.0f);
+    std::ranges::fill(y1_r_, 0.0f);
+    std::ranges::fill(y2_l_, 0.0f);
+    std::ranges::fill(y2_r_, 0.0f);
 }
 
 void ViPERDDC::SetEnable(const bool enable) noexcept {

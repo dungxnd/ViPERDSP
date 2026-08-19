@@ -26,11 +26,11 @@ void DynamicEQ::Process(float *samples, const uint32_t size) {
         auto smoothed_gain = state_[b].smoothed_gain_db;
         auto last_applied  = state_[b].last_applied_gain_db;
         const float  target_gain = params_[b].target_gain_db;
-        const double threshold   = static_cast<double>(params_[b].threshold_db);
+        const auto   threshold   = static_cast<double>(params_[b].threshold_db);
 
         for (uint32_t i = 0; i < frame_count; i += 2) {
-            const double sample_l = static_cast<double>(samples[i]);
-            const double sample_r = static_cast<double>(samples[i + 1]);
+            const auto sample_l = static_cast<double>(samples[i]);
+            const auto sample_r = static_cast<double>(samples[i + 1]);
 
             const double power_l = sample_l * sample_l;
             const double power_r = sample_r * sample_r;
@@ -52,8 +52,8 @@ void DynamicEQ::Process(float *samples, const uint32_t size) {
                                           ? attack_coeff : release_coeff;
             smoothed_gain += gain_coeff * (desired_gain_db - smoothed_gain);
 
-            const auto current_gain_db = static_cast<float>(smoothed_gain);
-            if (std::abs(current_gain_db - last_applied) > kGainChangeThreshold) {
+            if (const auto current_gain_db = static_cast<float>(smoothed_gain);
+                std::abs(current_gain_db - last_applied) > kGainChangeThreshold) {
                 ConfigureApplicationFilter(b, current_gain_db);
                 last_applied = current_gain_db;
             }

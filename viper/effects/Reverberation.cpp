@@ -15,6 +15,7 @@ void Reverberation::Process(float* const buffer, const uint32_t size) noexcept {
     }
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const) — model_.Reset() mutates state
 void Reverberation::Reset() noexcept {
     model_.Reset();
 }

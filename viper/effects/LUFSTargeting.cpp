@@ -9,7 +9,12 @@
 namespace {
 
 struct BiquadCoeffs {
-    double a0, a1, a2, b0, b1, b2;
+    double a0;
+    double a1;
+    double a2;
+    double b0;
+    double b1;
+    double b2;
 };
 
 struct KWeightCoeffs {

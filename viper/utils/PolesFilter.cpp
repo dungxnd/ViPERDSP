@@ -64,7 +64,7 @@ void PolesFilter::SetSamplingRate(const uint32_t sampling_rate) noexcept {
 }
 
 void PolesFilter::UpdateCoeff() noexcept {
-    const float sr = static_cast<float>(sampling_rate_);
+    const auto sr = static_cast<float>(sampling_rate_);
     const float lower_angle = static_cast<float>(lower_freq_) * std::numbers::pi_v<float> / sr;
     const float upper_angle = static_cast<float>(upper_freq_) * std::numbers::pi_v<float> / sr;
 

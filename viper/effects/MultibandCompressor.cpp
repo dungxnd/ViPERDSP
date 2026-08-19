@@ -103,8 +103,7 @@ void MultibandCompressor::SetBandCount(const uint32_t count) {
         crossover_freqs_[2] = 0.0f;
         crossover_freqs_[3] = 0.0f;
     } else {
-        std::copy(kDefault5BandFreqs.begin(), kDefault5BandFreqs.end(),
-                  crossover_freqs_.begin());
+        std::ranges::copy(kDefault5BandFreqs, crossover_freqs_.begin());
     }
     Reset();
 }

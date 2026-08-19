@@ -100,10 +100,11 @@ void ViPERBass::ProcessSubwoofer(float* const samples, const uint32_t size) noex
 void ViPERBass::Process(float* const samples, const uint32_t size) noexcept {
     if (!enable_ || size == 0) return;
 
+    using enum ProcessMode;
     switch (process_mode_) {
-        case ProcessMode::NaturalBass: ProcessNaturalBass(samples, size); break;
-        case ProcessMode::PureBasPlus: ProcessPureBasPlus(samples, size); break;
-        case ProcessMode::Subwoofer:   ProcessSubwoofer  (samples, size); break;
+        case NaturalBass: ProcessNaturalBass(samples, size); break;
+        case PureBasPlus: ProcessPureBasPlus(samples, size); break;
+        case Subwoofer:   ProcessSubwoofer  (samples, size); break;
     }
 }
 

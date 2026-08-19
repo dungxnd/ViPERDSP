@@ -53,7 +53,14 @@ void MultiBiquad::RefreshFilter(const FilterType type, const FilterParams& p) {
         z = -1.0;
     }
 
-    struct Coeffs { double a0, a1, a2, b0, b1, b2; };
+    struct Coeffs {
+        double a0;
+        double a1;
+        double a2;
+        double b0;
+        double b1;
+        double b2;
+    };
     Coeffs c{};
 
     switch (type) {
