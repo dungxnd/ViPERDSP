@@ -1,10 +1,8 @@
 #include "Crossfeed.h"
-#include "../constants.h"
 #include <cmath>
 #include <numbers>
 
-Crossfeed::Crossfeed()
-    : sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE) {
+Crossfeed::Crossfeed() {
     Reset();
 }
 

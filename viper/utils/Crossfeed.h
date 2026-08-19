@@ -27,7 +27,7 @@ public:
     void FilterSample(float *sample) noexcept;
 
 private:
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
 
     float a0_lo_{0.0f};
     float b1_lo_{0.0f};
