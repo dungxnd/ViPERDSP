@@ -5,7 +5,7 @@
 static constexpr uint32_t kLookahead = 256;
 static constexpr float kReleaseTauSec = 0.080f;
 static constexpr float kDenormFix = 1e-25f;
-static constexpr float kReleaseCoeff =
+static const float kReleaseCoeff =
     1.0f - std::exp(-1.0f / (kReleaseTauSec * 44100.0f));
 
 SoftwareLimiter::SoftwareLimiter() {
