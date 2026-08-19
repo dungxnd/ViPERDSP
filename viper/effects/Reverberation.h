@@ -7,18 +7,17 @@ class Reverberation {
 public:
     Reverberation();
 
-    void Process(float *buffer, uint32_t size);
-    void Reset() const;
+    void Process(float* buffer, uint32_t size) noexcept;
+    void Reset() noexcept;
 
-    void SetEnable(bool enable);
-    void SetDamp(float value);
-    void SetDry(float value);
-    void SetRoomSize(float value);
-    void SetWet(float value);
-    void SetWidth(float value);
+    void SetEnable(bool enable) noexcept;
+    void SetDamp(float value)     noexcept;
+    void SetDry(float value)      noexcept;
+    void SetRoomSize(float value) noexcept;
+    void SetWet(float value)      noexcept;
+    void SetWidth(float value)    noexcept;
 
 private:
-    bool enable_;
-
+    bool      enable_{false};
     CRevModel model_;
 };

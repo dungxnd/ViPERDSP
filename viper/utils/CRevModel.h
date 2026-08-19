@@ -2,48 +2,59 @@
 
 #include "CAllPassFilter.h"
 #include "CCombFilter.h"
+#include <array>
+#include <cstdint>
+#include <memory>
 
 class CRevModel {
 public:
     CRevModel();
-    ~CRevModel();
 
-    void ProcessReplace(float *buf_l, float *buf_r, uint32_t size);
-    void Mute() const;
-    void Reset() const;
+    // Rule of Zero — unique_ptr manages buffer_pool_; copy deleted, move = default.
+    CRevModel(const CRevModel&)            = delete;
+    CRevModel& operator=(const CRevModel&) = delete;
+    CRevModel(CRevModel&&)                 = default;
+    CRevModel& operator=(CRevModel&&)      = default;
 
-    void SetRoomSize(float value);
-    void SetDamp(float value);
-    void SetWet(float value);
-    void SetDry(float value);
-    void SetWidth(float value);
+    void ProcessReplace(float* buf_l, float* buf_r, uint32_t size) noexcept;
+    void Mute()  const noexcept;
+    void Reset() const noexcept;
 
-    [[nodiscard]] float GetRoomSize() const;
-    [[nodiscard]] float GetDamp() const;
-    [[nodiscard]] float GetWet() const;
-    [[nodiscard]] float GetDry() const;
-    [[nodiscard]] float GetWidth() const;
+    void SetRoomSize(float value) noexcept;
+    void SetDamp(float value)     noexcept;
+    void SetWet(float value)      noexcept;
+    void SetDry(float value)      noexcept;
+    void SetWidth(float value)    noexcept;
 
-    void UpdateCoeffs();
+    [[nodiscard]] float GetRoomSize() const noexcept;
+    [[nodiscard]] float GetDamp()     const noexcept;
+    [[nodiscard]] float GetWet()      const noexcept;
+    [[nodiscard]] float GetDry()      const noexcept;
+    [[nodiscard]] float GetWidth()    const noexcept;
+
+    void UpdateCoeffs() noexcept;
 
 private:
-    float gain_;
-    float room_size_;
-    float internal_room_size_;
-    float damp_;
-    float internal_damp_;
-    float wet_;
-    float wet1_;
-    float wet2_;
-    float dry_;
-    float width_;
+    static constexpr uint32_t kNumCombs   = 8;
+    static constexpr uint32_t kNumAllPass = 4;
 
-    CCombFilter comb_l_[8];
-    CCombFilter comb_r_[8];
+    float gain_{0.0f};
+    float room_size_{0.0f};
+    float internal_room_size_{0.0f};
+    float damp_{0.0f};
+    float internal_damp_{0.0f};
+    float wet_{0.0f};
+    float wet1_{0.0f};
+    float wet2_{0.0f};
+    float dry_{0.0f};
+    float width_{0.0f};
 
-    CAllPassFilter allpass_l_[4];
-    CAllPassFilter allpass_r_[4];
+    std::array<CCombFilter,    kNumCombs>   comb_l_;
+    std::array<CCombFilter,    kNumCombs>   comb_r_;
+    std::array<CAllPassFilter, kNumAllPass> allpass_l_;
+    std::array<CAllPassFilter, kNumAllPass> allpass_r_;
 
-    float *buffer_pool_;
-    float *buffers_[24];
+    std::unique_ptr<float[]> buffer_pool_;
+    // Non-owning views into buffer_pool_ — valid as long as pool is alive.
+    std::array<float*, 24>   buffers_{};
 };
