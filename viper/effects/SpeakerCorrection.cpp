@@ -1,17 +1,10 @@
 #include "SpeakerCorrection.h"
-#include "../constants.h"
 
-SpeakerCorrection::SpeakerCorrection() :
-    enable_(false),
-    sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE),
-    hp_cutoff_(80u),
-    lp_cutoff_(13500u),
-    bp_center_(420u),
-    bp_q_(3.88f) {
+SpeakerCorrection::SpeakerCorrection() {
     Reset();
 }
 
-void SpeakerCorrection::Process(float *samples, const uint32_t size) {
+void SpeakerCorrection::Process(float *samples, const uint32_t size) noexcept {
     if (!enable_) return;
 
     for (uint32_t i = 0; i < size * 2; i += 2) {
@@ -31,96 +24,83 @@ void SpeakerCorrection::Process(float *samples, const uint32_t size) {
     }
 }
 
-void SpeakerCorrection::Reset() {
-    low_pass_[0].Reset();
-    low_pass_[1].Reset();
-    band_pass_[0].Reset();
-    band_pass_[1].Reset();
-    high_pass_[0].Reset();
-    high_pass_[1].Reset();
+void SpeakerCorrection::Reset() noexcept {
+    for (auto& f : low_pass_)   f.Reset();
+    for (auto& f : band_pass_)  f.Reset();
+    for (auto& f : high_pass_)  f.Reset();
 
     RefreshHighPass();
     RefreshLowPass();
     RefreshBandPass();
 }
 
-void SpeakerCorrection::SetEnable(const bool enable) {
+void SpeakerCorrection::SetEnable(const bool enable) noexcept {
     if (enable_ != enable) {
-        if (enable) {
-            Reset();
-        }
+        if (enable) Reset();
         enable_ = enable;
     }
 }
 
-void SpeakerCorrection::SetSamplingRate(const uint32_t sampling_rate) {
+void SpeakerCorrection::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate_ != sampling_rate) {
         sampling_rate_ = sampling_rate;
         Reset();
     }
 }
 
-void SpeakerCorrection::SetHighPassCutoff(const uint32_t value) {
+void SpeakerCorrection::SetHighPassCutoff(const uint32_t value) noexcept {
     if (hp_cutoff_ != value) {
         hp_cutoff_ = value;
         RefreshHighPass();
     }
 }
 
-void SpeakerCorrection::SetLowPassCutoff(const uint32_t value) {
+void SpeakerCorrection::SetLowPassCutoff(const uint32_t value) noexcept {
     if (lp_cutoff_ != value) {
         lp_cutoff_ = value;
         RefreshLowPass();
     }
 }
 
-void SpeakerCorrection::SetBandPassCenter(const uint32_t value) {
+void SpeakerCorrection::SetBandPassCenter(const uint32_t value) noexcept {
     if (bp_center_ != value) {
         bp_center_ = value;
         RefreshBandPass();
     }
 }
 
-void SpeakerCorrection::SetBandPassQ(const float value) {
+void SpeakerCorrection::SetBandPassQ(const float value) noexcept {
     if (bp_q_ != value) {
         bp_q_ = value;
         RefreshBandPass();
     }
 }
 
-void SpeakerCorrection::RefreshHighPass() {
-    high_pass_[0].RefreshFilter(
-        MultiBiquad::FilterType::HIGH_PASS,
-        0.0f,
-        static_cast<float>(hp_cutoff_),
-        sampling_rate_,
-        1.0f,
-        false
-    );
-    high_pass_[1].RefreshFilter(
-        MultiBiquad::FilterType::HIGH_PASS,
-        0.0f,
-        static_cast<float>(hp_cutoff_),
-        sampling_rate_,
-        1.0f,
-        false
-    );
+void SpeakerCorrection::RefreshHighPass() noexcept {
+    for (auto& f : high_pass_) {
+        f.RefreshFilter(
+            MultiBiquad::FilterType::HIGH_PASS,
+            0.0f,
+            static_cast<float>(hp_cutoff_),
+            sampling_rate_,
+            1.0f,
+            false
+        );
+    }
 }
 
-void SpeakerCorrection::RefreshLowPass() {
-    low_pass_[0].SetLowPassParameter(
-        static_cast<float>(lp_cutoff_), sampling_rate_, 1.0f
-    );
-    low_pass_[1].SetLowPassParameter(
-        static_cast<float>(lp_cutoff_), sampling_rate_, 1.0f
-    );
+void SpeakerCorrection::RefreshLowPass() noexcept {
+    for (auto& f : low_pass_) {
+        f.SetLowPassParameter(
+            static_cast<float>(lp_cutoff_), sampling_rate_, 1.0f
+        );
+    }
 }
 
-void SpeakerCorrection::RefreshBandPass() {
-    band_pass_[0].SetBandPassParameter(
-        static_cast<float>(bp_center_), sampling_rate_, bp_q_
-    );
-    band_pass_[1].SetBandPassParameter(
-        static_cast<float>(bp_center_), sampling_rate_, bp_q_
-    );
+void SpeakerCorrection::RefreshBandPass() noexcept {
+    for (auto& f : band_pass_) {
+        f.SetBandPassParameter(
+            static_cast<float>(bp_center_), sampling_rate_, bp_q_
+        );
+    }
 }
