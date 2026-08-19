@@ -73,6 +73,9 @@ void TubeSimulator::Process(float *buffer, const uint32_t size) {
     const double dry_gain = 1.0 - wet_gain;
 
     for (uint32_t i = 0; i < size; i++) {
+        // Sanitize: Inf/NaN on input would corrupt IIR state permanently.
+        if (!std::isfinite(buffer[i * 2]))     buffer[i * 2]     = 0.0f;
+        if (!std::isfinite(buffer[i * 2 + 1])) buffer[i * 2 + 1] = 0.0f;
         const double in_l = buffer[i * 2];
         // Phase-matched dry path: same APF poles as HPF + LPF on the wet chain
         const double dry_l = dry_apf_lpf_[0].ProcessSample(
