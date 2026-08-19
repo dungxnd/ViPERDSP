@@ -7,10 +7,10 @@ MultiBiquad::MultiBiquad() noexcept = default;
 double MultiBiquad::ProcessSample(const double sample) noexcept {
     const double out = sample * b0_ + x1_ * b1_ + x2_ * b2_ + y1_ * a1_ + y2_ * a2_;
     x2_ = x1_;
-    x1_ = sample;
+    x1_ = std::isfinite(sample) ? sample : 0.0;
     y2_ = y1_;
-    y1_ = out;
-    return out;
+    y1_ = std::isfinite(out)    ? out    : 0.0;
+    return std::isfinite(out)   ? out    : 0.0;
 }
 
 void MultiBiquad::Reset() noexcept {
