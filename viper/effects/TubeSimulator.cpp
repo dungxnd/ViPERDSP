@@ -1,5 +1,6 @@
 #include "TubeSimulator.h"
 #include "../constants.h"
+#include <cmath>
 
 // Per-model circuit parameters: { TubeModel, Vdd, Rp, bias, output_gain }
 // 12AX7: high-gain stage, classic V4A topology                    (mu≈98,  gm=1.6mA/V)
