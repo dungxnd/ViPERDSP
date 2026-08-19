@@ -135,13 +135,13 @@ void DynamicEQ::SetBandRelease(const uint32_t band, const float value) {
 
 void DynamicEQ::SetBandFilterType(const uint32_t band, const int value) {
     static constexpr std::array<MultiBiquad::FilterType, 3> kTypes{{
-        MultiBiquad::FilterType::PEAK,
-        MultiBiquad::FilterType::LOW_SHELF,
-        MultiBiquad::FilterType::HIGH_SHELF,
+        MultiBiquad::FilterType::Peak,
+        MultiBiquad::FilterType::LowShelf,
+        MultiBiquad::FilterType::HighShelf,
     }};
     params_[band].filter_type = (value >= 0 && value <= 2)
         ? kTypes[value]
-        : MultiBiquad::FilterType::PEAK;
+        : MultiBiquad::FilterType::Peak;
     ConfigureApplicationFilter(band, 0.0f);
     state_[band].last_applied_gain_db = 0.0f;
 }

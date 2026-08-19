@@ -3,13 +3,13 @@
 
 Subwoofer::Subwoofer() noexcept {
     for (auto& p : peak_) {
-        p.RefreshFilter(MultiBiquad::FilterType::PEAK, gain_, 37.0f, sampling_rate_, 1.0f, false);
+        p.RefreshFilter(MultiBiquad::FilterType::Peak, gain_, 37.0f, sampling_rate_, 1.0f, false);
     }
     for (auto& p : peak_low_) {
-        p.RefreshFilter(MultiBiquad::FilterType::PEAK, gain_lower_, 75.0f, sampling_rate_, 1.0f, false);
+        p.RefreshFilter(MultiBiquad::FilterType::Peak, gain_lower_, 75.0f, sampling_rate_, 1.0f, false);
     }
     for (auto& lp : lowpass_) {
-        lp.RefreshFilter(MultiBiquad::FilterType::LOW_PASS, 0.0f, 200.0f, sampling_rate_, 1.0f, false);
+        lp.RefreshFilter(MultiBiquad::FilterType::LowPass, 0.0f, 200.0f, sampling_rate_, 1.0f, false);
     }
 }
 
@@ -32,12 +32,12 @@ void Subwoofer::SetBassGain(const uint32_t sampling_rate, const float gain_db) n
     gain_lower_ = 20.0f * std::log10(gain_db / 8.0f);
 
     for (auto& p : peak_) {
-        p.RefreshFilter(MultiBiquad::FilterType::PEAK, gain_, 44.0f, sampling_rate, 0.75f, true);
+        p.RefreshFilter(MultiBiquad::FilterType::Peak, gain_, 44.0f, sampling_rate, 0.75f, true);
     }
     for (auto& p : peak_low_) {
-        p.RefreshFilter(MultiBiquad::FilterType::PEAK, gain_lower_, 80.0f, sampling_rate, 0.2f, true);
+        p.RefreshFilter(MultiBiquad::FilterType::Peak, gain_lower_, 80.0f, sampling_rate, 0.2f, true);
     }
     for (auto& lp : lowpass_) {
-        lp.RefreshFilter(MultiBiquad::FilterType::LOW_PASS, 0.0f, 380.0f, sampling_rate, 0.6f, false);
+        lp.RefreshFilter(MultiBiquad::FilterType::LowPass, 0.0f, 380.0f, sampling_rate, 0.6f, false);
     }
 }

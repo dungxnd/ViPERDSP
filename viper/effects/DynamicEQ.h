@@ -33,7 +33,7 @@ private:
         float threshold_db{-24.0f};
         float attack_ms{10.0f};
         float release_ms{100.0f};
-        MultiBiquad::FilterType filter_type{MultiBiquad::FilterType::PEAK};
+        MultiBiquad::FilterType filter_type{MultiBiquad::FilterType::Peak};
     };
 
     struct BandState {

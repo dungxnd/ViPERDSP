@@ -58,7 +58,7 @@ void DiffSurround::Reset() {
     lp_filter_.Reset();
     if (lp_cutoff_ > 0.0f) {
         lp_filter_.RefreshFilter(
-            MultiBiquad::FilterType::LOW_PASS,
+            MultiBiquad::FilterType::LowPass,
             0.0f, lp_cutoff_, sampling_rate_, 0.7071f, false
         );
     }
@@ -95,7 +95,7 @@ void DiffSurround::SetLPCutoff(float value) {
         lp_cutoff_ = value;
         if (value > 0.0f) {
             lp_filter_.RefreshFilter(
-                MultiBiquad::FilterType::LOW_PASS,
+                MultiBiquad::FilterType::LowPass,
                 0.0f, value, sampling_rate_, 0.7071f, false
             );
         }

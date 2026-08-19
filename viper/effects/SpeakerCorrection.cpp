@@ -79,7 +79,7 @@ void SpeakerCorrection::SetBandPassQ(const float value) noexcept {
 void SpeakerCorrection::RefreshHighPass() noexcept {
     for (auto& f : high_pass_) {
         f.RefreshFilter(
-            MultiBiquad::FilterType::HIGH_PASS,
+            MultiBiquad::FilterType::HighPass,
             0.0f,
             static_cast<float>(hp_cutoff_),
             sampling_rate_,

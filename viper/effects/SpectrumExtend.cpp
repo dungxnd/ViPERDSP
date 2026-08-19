@@ -34,11 +34,11 @@ void SpectrumExtend::Reset() noexcept {
     const auto nyq   = static_cast<float>(sampling_rate_) / 2.0f - 2000.0f;
 
     for (auto& f : highpass_) {
-        f.RefreshFilter(MultiBiquad::FilterType::HIGH_PASS,
+        f.RefreshFilter(MultiBiquad::FilterType::HighPass,
                         0.0f, freq, sampling_rate_, 0.717f, false);
     }
     for (auto& f : lowpass_) {
-        f.RefreshFilter(MultiBiquad::FilterType::LOW_PASS,
+        f.RefreshFilter(MultiBiquad::FilterType::LowPass,
                         0.0f, nyq, sampling_rate_, 0.717f, false);
     }
 

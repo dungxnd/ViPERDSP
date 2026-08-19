@@ -109,18 +109,18 @@ void TubeSimulator::Reset() noexcept {
 
     for (std::size_t ch = 0; ch < 2; ch++) {
         high_pass_[ch].RefreshFilter(
-            MultiBiquad::FilterType::HIGH_PASS,
+            MultiBiquad::FilterType::HighPass,
             0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
         low_pass_[ch].RefreshFilter(
-            MultiBiquad::FilterType::LOW_PASS,
+            MultiBiquad::FilterType::LowPass,
             0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
 
         // Matched allpass on dry path: same poles as HPF/LPF → cancels phase mismatch
         dry_apf_hpf_[ch].RefreshFilter(
-            MultiBiquad::FilterType::ALL_PASS,
+            MultiBiquad::FilterType::AllPass,
             0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
         dry_apf_lpf_[ch].RefreshFilter(
-            MultiBiquad::FilterType::ALL_PASS,
+            MultiBiquad::FilterType::AllPass,
             0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
 
         tube_[ch].SetTubeModel(cfg.model, cfg.vdd, cfg.rp, cfg.bias, cfg.output_gain);
@@ -171,10 +171,10 @@ void TubeSimulator::SetTubeHpfCutoff(const float cutoff_hz) noexcept {
     // Update wet HPF and dry APF synchronously — tube DC-blocker state is untouched.
     for (std::size_t ch = 0; ch < 2; ch++) {
         high_pass_[ch].RefreshFilter(
-            MultiBiquad::FilterType::HIGH_PASS,
+            MultiBiquad::FilterType::HighPass,
             0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
         dry_apf_hpf_[ch].RefreshFilter(
-            MultiBiquad::FilterType::ALL_PASS,
+            MultiBiquad::FilterType::AllPass,
             0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
     }
 }
