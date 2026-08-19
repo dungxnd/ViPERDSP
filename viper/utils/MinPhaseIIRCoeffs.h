@@ -1,27 +1,34 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+#include <optional>
+#include <span>
 
 class MinPhaseIIRCoeffs {
 public:
-    MinPhaseIIRCoeffs();
-    ~MinPhaseIIRCoeffs();
+    MinPhaseIIRCoeffs() noexcept = default;
 
-    [[nodiscard]] double *GetCoefficients() const;
-    [[nodiscard]] float GetIndexFrequency(uint32_t index) const;
+    // Rule of Zero — unique_ptr handles lifetime; copy is deleted implicitly.
+    MinPhaseIIRCoeffs(const MinPhaseIIRCoeffs&)            = delete;
+    MinPhaseIIRCoeffs& operator=(const MinPhaseIIRCoeffs&) = delete;
+    MinPhaseIIRCoeffs(MinPhaseIIRCoeffs&&)                 = default;
+    MinPhaseIIRCoeffs& operator=(MinPhaseIIRCoeffs&&)      = default;
 
-    int UpdateCoeffs(uint32_t bands, uint32_t sampling_rate);
+    [[nodiscard]] const double* GetCoefficients() const noexcept;
+    [[nodiscard]] float         GetIndexFrequency(uint32_t index) const noexcept;
+
+    [[nodiscard]] int UpdateCoeffs(uint32_t bands, uint32_t sampling_rate);
 
 private:
-    uint32_t bands_;
+    struct FreqPair {
+        double lower;
+        double upper;
+    };
 
-    double *coeffs_;
+    uint32_t                    bands_{0};
+    std::unique_ptr<double[]>   coeffs_;
 
-    static void Find_F1_F2(
-        double center_freq,
-        double bandwidth_octaves,
-        double *lower_freq,
-        double *upper_freq
-    );
-    static int SolveRoot(double coeff_a, double coeff_b, double coeff_c, double *root);
+    [[nodiscard]] static FreqPair        Find_F1_F2(double center_freq, double bandwidth_octaves) noexcept;
+    [[nodiscard]] static std::optional<double> SolveRoot(double coeff_a, double coeff_b, double coeff_c) noexcept;
 };

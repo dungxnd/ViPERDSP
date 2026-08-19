@@ -2,30 +2,32 @@
 
 #include "../utils/MinPhaseIIRCoeffs.h"
 #include <array>
+#include <cstdint>
 
 class IIRFilter {
 public:
     explicit IIRFilter(uint32_t bands);
 
-    void Process(float *samples, uint32_t size);
-    void Reset();
+    void Process(float* samples, uint32_t size) noexcept;
+    void Reset() noexcept;
 
-    void SetEnable(bool enable);
+    void SetEnable(bool enable) noexcept;
     void SetBandCount(uint32_t bands);
-    void SetBandLevel(uint32_t band, float level);
-    void SetBandLevels(const float *levels, uint32_t count);
+    void SetBandLevel(uint32_t band, float level) noexcept;
+    void SetBandLevels(const float* levels, uint32_t count) noexcept;
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
-    bool enable_;
+    static constexpr float kDefaultLevelQ = 0.636f;
 
-    uint32_t bands_;
-    uint32_t sampling_rate_;
-    uint32_t buf_index0_;
-    uint32_t buf_index1_;
-    uint32_t buf_index2_;
+    bool     enable_{false};
+    uint32_t bands_{0};
+    uint32_t sampling_rate_{44100};
+    uint32_t buf_index0_{2};
+    uint32_t buf_index1_{1};
+    uint32_t buf_index2_{0};
 
-    double buf_[496];
-    std::array<float, 31> band_levels_with_q_;
-    MinPhaseIIRCoeffs min_phase_iir_coeffs_;
+    std::array<double, 496>  buf_{};
+    std::array<float,   31>  band_levels_with_q_{};
+    MinPhaseIIRCoeffs        min_phase_iir_coeffs_;
 };
