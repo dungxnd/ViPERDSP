@@ -1,65 +1,53 @@
 #include "MinPhaseIIRCoeffs.h"
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <numbers>
 
-static constexpr float kMinPhaseIirCoeffsFreq10Bands[] = {
-    31.0f, 62.0f, 125.0f, 250.0f, 500.0f, 1000.0f, 2000.0f, 4000.0f, 8000.0f, 16000.0f
+namespace {
+
+constexpr std::array<float, 10> kFreq10 = {
+    31.0f, 62.0f, 125.0f, 250.0f, 500.0f,
+    1000.0f, 2000.0f, 4000.0f, 8000.0f, 16000.0f
 };
 
-static constexpr float kMinPhaseIirCoeffsFreq15Bands[] = {
-    25.0f,
-    40.0f,
-    63.0f,
-    100.0f,
-    160.0f,
-    250.0f,
-    400.0f,
-    630.0f,
-    1000.0f,
-    1600.0f,
-    2500.0f,
-    4000.0f,
-    6300.0f,
-    10000.0f,
-    16000.0f
+constexpr std::array<float, 15> kFreq15 = {
+    25.0f, 40.0f, 63.0f, 100.0f, 160.0f,
+    250.0f, 400.0f, 630.0f, 1000.0f, 1600.0f,
+    2500.0f, 4000.0f, 6300.0f, 10000.0f, 16000.0f
 };
 
-static constexpr float kMinPhaseIirCoeffsFreq25Bands[] = {
-    20.0f,   31.5f,   40.0f,   50.0f,    80.0f,    100.0f,   125.0f,  160.0f,  250.0f,
-    315.0f,  400.0f,  500.0f,  800.0f,   1000.0f,  1250.0f,  1600.0f, 2500.0f, 3150.0f,
-    4000.0f, 5000.0f, 8000.0f, 10000.0f, 12500.0f, 16000.0f, 20000.0f
+constexpr std::array<float, 25> kFreq25 = {
+    20.0f,   31.5f,   40.0f,   50.0f,    80.0f,
+    100.0f,  125.0f,  160.0f,  250.0f,   315.0f,
+    400.0f,  500.0f,  800.0f,  1000.0f,  1250.0f,
+    1600.0f, 2500.0f, 3150.0f, 4000.0f,  5000.0f,
+    8000.0f, 10000.0f,12500.0f,16000.0f, 20000.0f
 };
 
-static constexpr float kMinPhaseIirCoeffsFreq31Bands[] = {
-    20.0f,   25.0f,   31.5f,   40.0f,    50.0f,    63.0f,    80.0f,   100.0f,
-    125.0f,  160.0f,  200.0f,  250.0f,   315.0f,   400.0f,   500.0f,  630.0f,
-    800.0f,  1000.0f, 1250.0f, 1600.0f,  2000.0f,  2500.0f,  3150.0f, 4000.0f,
-    5000.0f, 6300.0f, 8000.0f, 10000.0f, 12500.0f, 16000.0f, 20000.0f
+constexpr std::array<float, 31> kFreq31 = {
+    20.0f,   25.0f,   31.5f,   40.0f,    50.0f,
+    63.0f,   80.0f,   100.0f,  125.0f,   160.0f,
+    200.0f,  250.0f,  315.0f,  400.0f,   500.0f,
+    630.0f,  800.0f,  1000.0f, 1250.0f,  1600.0f,
+    2000.0f, 2500.0f, 3150.0f, 4000.0f,  5000.0f,
+    6300.0f, 8000.0f, 10000.0f,12500.0f, 16000.0f,
+    20000.0f
 };
 
-MinPhaseIIRCoeffs::MinPhaseIIRCoeffs() :
-    bands_(0),
-    coeffs_(nullptr) {}
+} // anonymous namespace
 
-MinPhaseIIRCoeffs::~MinPhaseIIRCoeffs() {
-    delete[] coeffs_;
+const double* MinPhaseIIRCoeffs::GetCoefficients() const noexcept {
+    return coeffs_.data();
 }
 
-double *MinPhaseIIRCoeffs::GetCoefficients() const {
-    return coeffs_;
-}
-
-float MinPhaseIIRCoeffs::GetIndexFrequency(const uint32_t index) const {
+float MinPhaseIIRCoeffs::GetIndexFrequency(const uint32_t index) const noexcept {
     switch (bands_) {
-        case 10:
-            return kMinPhaseIirCoeffsFreq10Bands[index];
-        case 15:
-            return kMinPhaseIirCoeffsFreq15Bands[index];
-        case 25:
-            return kMinPhaseIirCoeffsFreq25Bands[index];
-        case 31:
-            return kMinPhaseIirCoeffsFreq31Bands[index];
-        default:
-            return 0.0f;
+        case 10: return kFreq10[index];
+        case 15: return kFreq15[index];
+        case 25: return kFreq25[index];
+        case 31: return kFreq31[index];
+        default: return 0.0f;
     }
 }
 
@@ -69,94 +57,81 @@ int MinPhaseIIRCoeffs::UpdateCoeffs(const uint32_t bands, const uint32_t samplin
     }
 
     bands_ = bands;
+    coeffs_.assign(bands * 4, 0.0);
 
-    delete[] coeffs_;
-    coeffs_ = new double[bands * 4]();
-
-    const float *band_freqs = nullptr;
-    double tmp = 0;
+    const float* band_freqs = nullptr;
+    double bandwidth = 0.0;
 
     switch (bands) {
         case 10:
-            band_freqs = kMinPhaseIirCoeffsFreq10Bands;
-            tmp = 1.0;
+            band_freqs = kFreq10.data();
+            bandwidth  = 1.0;
             break;
         case 15:
-            band_freqs = kMinPhaseIirCoeffsFreq15Bands;
-            tmp = 2.0 / 3.0;
+            band_freqs = kFreq15.data();
+            bandwidth  = 2.0 / 3.0;
             break;
         case 25:
-            band_freqs = kMinPhaseIirCoeffsFreq25Bands;
-            tmp = 1.0 / 3.0;
+            band_freqs = kFreq25.data();
+            bandwidth  = 1.0 / 3.0;
             break;
         case 31:
-            band_freqs = kMinPhaseIirCoeffsFreq31Bands;
-            tmp = 1.0 / 3.0;
+            band_freqs = kFreq31.data();
+            bandwidth  = 1.0 / 3.0;
             break;
         default:;
     }
 
-    for (uint32_t i = 0; i < bands; i++) {
-        double ret1;
-        double ret2;
+    const double inv_sr = 1.0 / static_cast<double>(sampling_rate);
 
-        Find_F1_F2(band_freqs[i], tmp, &ret2, &ret1);
+    for (uint32_t i = 0; i < bands; ++i) {
+        const auto [lower, upper] = Find_F1_F2(band_freqs[i], bandwidth);
 
-        const double x = 2.0 * M_PI * static_cast<double>(band_freqs[i])
-                         / static_cast<double>(sampling_rate);
-        const double y = 2.0 * M_PI * ret2 / static_cast<double>(sampling_rate);
+        const double x = 2.0 * std::numbers::pi_v<double> * static_cast<double>(band_freqs[i]) * inv_sr;
+        const double y = 2.0 * std::numbers::pi_v<double> * lower * inv_sr;
 
-        const double cos_x = cos(x);
-        const double cos_y = cos(y);
-        const double sin_y = sin(y);
+        const double cos_x = std::cos(x);
+        const double cos_y = std::cos(y);
+        const double sin_y = std::sin(y);
 
-        const double a = cos_x * cos_y;
-        const double b = cos_x * cos_x / 2.0;
-        const double c = sin_y * sin_y;
+        const double b_half = cos_x * cos_x * 0.5;
+        const double sin_y2 = sin_y * sin_y;
+        const double cos_y2 = cos_y * cos_y;
 
-        const double d = b - a + 0.5 - c;
-        const double e = c + (b + cos_y * cos_y - a - 0.5);
-        const double f = cos_x * cos_x * 0.125 - cos_x * cos_y * 0.25 + 0.125 - c * 0.25;
+        const double d = b_half - cos_x * cos_y + 0.5 - sin_y2;
+        const double e = sin_y2 + (b_half + cos_y2 - cos_x * cos_y - 0.5);
+        const double f = b_half * 0.25 - cos_x * cos_y * 0.25 + 0.125 - sin_y2 * 0.25;
 
-        if (SolveRoot(d, e, f, &ret1) == 0) {
-            coeffs_[i * 4] = ret1 + ret1;
-            coeffs_[i * 4 + 1] = 0.5 - ret1;
-            coeffs_[i * 4 + 2] = (ret1 + 0.5) * cos_x * 2.0;
+        if (const auto root = SolveRoot(d, e, f); root.has_value()) {
+            const double r = *root;
+            coeffs_[i * 4]     = r + r;
+            coeffs_[i * 4 + 1] = 0.5 - r;
+            coeffs_[i * 4 + 2] = (r + 0.5) * cos_x * 2.0;
         }
     }
 
     return 1;
 }
 
-void MinPhaseIIRCoeffs::Find_F1_F2(
+MinPhaseIIRCoeffs::FreqPair MinPhaseIIRCoeffs::Find_F1_F2(
     const double center_freq,
-    const double bandwidth_octaves,
-    double *lower_freq,
-    double *upper_freq
-) {
-    const double x = pow(2.0, bandwidth_octaves / 2.0);
-    *lower_freq = center_freq / x;
-    *upper_freq = center_freq * x;
+    const double bandwidth_octaves
+) noexcept {
+    const double x = std::pow(2.0, bandwidth_octaves * 0.5);
+    return { center_freq / x, center_freq * x };
 }
 
-int MinPhaseIIRCoeffs::SolveRoot(
-    const double coeff_a, const double coeff_b, const double coeff_c, double *root
-) {
+std::optional<double> MinPhaseIIRCoeffs::SolveRoot(
+    const double coeff_a,
+    const double coeff_b,
+    const double coeff_c
+) noexcept {
     const double x = (coeff_c - coeff_b * coeff_b / (coeff_a * 4.0)) / coeff_a;
+    if (x >= 0.0) return std::nullopt;
+
+    const double z = std::sqrt(-x);
     const double y = coeff_b / (coeff_a + coeff_a);
-
-    if (x >= 0.0) {
-        return -1;
-    }
-
-    const double z = sqrt(-x);
     const double a = -y - z;
-    const double b = z - y;
-    if (a > b) {
-        *root = b;
-    } else {
-        *root = a;
-    }
-
-    return 0;
+    const double b = z  - y;
+    return (a > b) ? b : a;
 }

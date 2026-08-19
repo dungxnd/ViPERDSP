@@ -3,29 +3,33 @@
 #include "../utils/Harmonic.h"
 #include "../utils/MultiBiquad.h"
 #include <array>
+#include <cstdint>
 
 class AnalogX {
 public:
+    enum class ProcessingModel { Soft = 0, Medium = 1, Hard = 2 };
+
     AnalogX();
 
-    void Process(float *samples, uint32_t size);
+    void Process(float* samples, uint32_t size);
     void Reset();
 
     void SetEnable(bool enable);
-    void SetProcessingModel(int model);
+    void SetProcessingModel(ProcessingModel model);
+    void SetProcessingModel(int model);  // accepts raw int from parameter dispatch
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
-    bool enable_;
+    bool enable_ = false;
 
-    int processing_model_;
-    uint32_t sampling_rate_;
-    uint32_t freq_range_;
+    ProcessingModel processing_model_ = ProcessingModel::Soft;
+    uint32_t        sampling_rate_    = 44100;
+    uint32_t        freq_range_       = 0;
 
-    float gain_;
+    float gain_ = 0.0f;
 
     std::array<MultiBiquad, 2> high_pass_;
-    std::array<Harmonic, 2> harmonic_;
+    std::array<Harmonic, 2>    harmonic_;
     std::array<MultiBiquad, 2> low_pass_;
     std::array<MultiBiquad, 2> peak_;
 };

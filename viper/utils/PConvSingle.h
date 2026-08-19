@@ -1,52 +1,60 @@
 #pragma once
-#include <cstdint>
 
-typedef struct PFFFT_Setup PFFFT_Setup;
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+using PFFFT_Setup = struct PFFFT_Setup;
 
 class PConvSingle {
 public:
-    PConvSingle();
+    PConvSingle() noexcept = default;
     ~PConvSingle();
+
+    // Non-copyable: owns raw FFT-aligned memory
+    PConvSingle(const PConvSingle&)            = delete;
+    PConvSingle& operator=(const PConvSingle&) = delete;
+    PConvSingle(PConvSingle&&)                 = delete;
+    PConvSingle& operator=(PConvSingle&&)      = delete;
 
     void Reset();
 
-    [[nodiscard]] uint32_t GetFFTSize() const;
-    [[nodiscard]] uint32_t GetSegmentCount() const;
-    [[nodiscard]] uint32_t GetSegmentSize() const;
-    [[nodiscard]] bool InstanceUsable() const;
+    [[nodiscard]] uint32_t GetFFTSize()      const noexcept;
+    [[nodiscard]] uint32_t GetSegmentCount() const noexcept;
+    [[nodiscard]] uint32_t GetSegmentSize()  const noexcept;
+    [[nodiscard]] bool     InstanceUsable()  const noexcept;
 
-    void Convolve(float *buffer, uint32_t n);
-    void ConvolveInterleaved(float *buffer, int channel, uint32_t n);
-    void ConvSegment(float *buffer, bool interleaved, int channel, uint32_t n);
+    void ConvolveInterleaved(float* buffer, int channel, uint32_t n);
+    void ConvSegment(float* buffer, bool interleaved, int channel, uint32_t n);
+    void Convolve(float* buffer, uint32_t n);
 
-    uint32_t LoadKernel(const float *kernel, uint32_t kernel_size, uint32_t segment_size);
-    uint32_t LoadKernel(
-        const float *kernel, float gain, uint32_t kernel_size, uint32_t segment_size
-    );
-
-    uint32_t ProcessKernel(const float *kernel, uint32_t kernel_size);
-    uint32_t ProcessKernel(const float *kernel, float gain, uint32_t kernel_size);
+    uint32_t LoadKernel(const float* kernel, uint32_t kernel_size, uint32_t segment_size);
+    uint32_t LoadKernel(const float* kernel, float gain, uint32_t kernel_size, uint32_t segment_size);
+    uint32_t ProcessKernel(const float* kernel, uint32_t kernel_size);
+    uint32_t ProcessKernel(const float* kernel, float gain, uint32_t kernel_size);
 
     void ReleaseResources();
     void UnloadKernel();
 
 private:
-    bool instance_usable_;
+    bool instance_usable_    = false;
+    uint32_t segment_count_  = 0;
+    uint32_t segment_size_   = 0;
+    uint32_t fft_size_        = 0;
+    uint32_t delay_line_index_ = 0;
+    uint32_t input_fill_     = 0;
 
-    void ConvChunk(float *buffer, bool interleaved, int channel, uint32_t n);
+    // Scalar PFFFT buffers — allocated via pffft_aligned_malloc / pffft_aligned_free
+    PFFFT_Setup* fft_setup_        = nullptr;
+    float*       fft_work_         = nullptr;
+    float*       overlap_buffer_   = nullptr;
+    float*       fft_buffer_       = nullptr;
+    float*       accum_buffer_     = nullptr;
+    float*       mono_buffer_      = nullptr;
 
-    uint32_t segment_count_;
-    uint32_t segment_size_;
-    uint32_t fft_size_;
-    uint32_t delay_line_index_;
-    uint32_t input_fill_;
+    // Vectors of per-segment PFFFT-aligned float* — inner ptrs freed before clear()
+    std::vector<float*> filter_segments_;
+    std::vector<float*> input_history_;
 
-    PFFFT_Setup *fft_setup_;
-    float *fft_work_;
-    float **filter_segments_;
-    float **input_history_;
-    float *overlap_buffer_;
-    float *fft_buffer_;
-    float *accum_buffer_;
-    float *mono_buffer_;
+    void ConvChunk(float* buffer, bool interleaved, int channel, uint32_t n);
 };

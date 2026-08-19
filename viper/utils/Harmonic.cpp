@@ -1,18 +1,13 @@
 #include "Harmonic.h"
+#include <algorithm>
 #include <cmath>
-#include <cstring>
+#include <ranges>
 
-static constexpr float kHarmonicDefault[] = {
-    1.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
-    0.0f,
+static constexpr double kPrevOutDecay = 0.999;
+
+static constexpr std::array<float, 10> kHarmonicDefault{
+    1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
 };
 
 Harmonic::Harmonic() {
@@ -20,56 +15,54 @@ Harmonic::Harmonic() {
     Reset();
 }
 
-double Harmonic::Process(const double sample) {
+double Harmonic::Process(const double sample) noexcept {
     const double prev_last = last_processed_;
 
     const double x = sample;
-    const float *c = coeffs_;
-    double y = c[10];
+    const auto* const c = coeffs_.data();
+    auto y       = static_cast<double>(c[10]);
 
-    y = fma(x, y, c[9]);
-    y = fma(x, y, c[8]);
-    y = fma(x, y, c[7]);
-    y = fma(x, y, c[6]);
-    y = fma(x, y, c[5]);
-    y = fma(x, y, c[4]);
-    y = fma(x, y, c[3]);
-    y = fma(x, y, c[2]);
-    y = fma(x, y, c[1]);
-    y = fma(x, y, c[0]);
+    y = std::fma(x, y, static_cast<double>(c[9]));
+    y = std::fma(x, y, static_cast<double>(c[8]));
+    y = std::fma(x, y, static_cast<double>(c[7]));
+    y = std::fma(x, y, static_cast<double>(c[6]));
+    y = std::fma(x, y, static_cast<double>(c[5]));
+    y = std::fma(x, y, static_cast<double>(c[4]));
+    y = std::fma(x, y, static_cast<double>(c[3]));
+    y = std::fma(x, y, static_cast<double>(c[2]));
+    y = std::fma(x, y, static_cast<double>(c[1]));
+    y = std::fma(x, y, static_cast<double>(c[0]));
 
     last_processed_ = y;
-    prev_out_ = last_processed_ + prev_out_ * 0.999 - prev_last;
+    prev_out_ = last_processed_ + prev_out_ * kPrevOutDecay - prev_last;
 
     if (sample_counter_ < biggest_coeff_) {
-        sample_counter_++;
+        ++sample_counter_;
         return 0.0;
     }
 
     return prev_out_;
 }
 
-void Harmonic::Reset() {
+void Harmonic::Reset() noexcept {
     last_processed_ = 0.0;
     sample_counter_ = 0;
-    prev_out_ = 0.0;
+    prev_out_       = 0.0;
 }
 
-void Harmonic::SetHarmonics(const float *coeffs) {
+void Harmonic::SetHarmonics(const std::span<const float, 10> coeffs) {
     UpdateCoeffs(coeffs);
     Reset();
 }
 
-void Harmonic::UpdateCoeffs(const float *coeffs) {
-    float arr1[11];
-    float arr2[11];
-
-    memset(arr1, 0, 11 * sizeof(float));
+void Harmonic::UpdateCoeffs(const std::span<const float, 10> coeffs) {
+    std::array<float, 11> arr1{};
+    std::array<float, 11> arr2{};
 
     float biggest_coeff = 0.0f;
     float abs_coeff_sum = 0.0f;
     for (uint32_t i = 0; i < 10; i++) {
-        const float abs_coeff = abs(coeffs[i]);
+        const float abs_coeff = std::abs(coeffs[i]);
         abs_coeff_sum += abs_coeff;
         if (abs_coeff > biggest_coeff) {
             biggest_coeff = abs_coeff;
@@ -77,30 +70,26 @@ void Harmonic::UpdateCoeffs(const float *coeffs) {
     }
     biggest_coeff_ = static_cast<uint32_t>(biggest_coeff * 10000.0f);
 
-    memcpy(arr1 + 1, coeffs, 10 * sizeof(float));
+    std::ranges::copy(coeffs, arr1.begin() + 1);
 
-    float norm_factor = 1.0f;
-    if (abs_coeff_sum > 1.0f) {
-        norm_factor = 1.0f / abs_coeff_sum;
-    }
+    const float norm_factor = (abs_coeff_sum > 1.0f) ? (1.0f / abs_coeff_sum) : 1.0f;
     for (uint32_t i = 1; i < 11; i++) {
         arr1[i] *= norm_factor;
     }
 
-    memset(coeffs_, 0, 11 * sizeof(float));
-    memset(arr2, 0, 11 * sizeof(float));
+    coeffs_.fill(0.0f);
 
     coeffs_[10] = arr1[10];
 
     for (uint32_t i = 2; i < 11; i++) {
         for (uint32_t j = 0; j < i; j++) {
             const float tmp = arr2[i - j];
-            arr2[i - j] = coeffs_[i - j];
-            coeffs_[i - j] = coeffs_[i - j - 1] * 2.0f - tmp;
+            arr2[i - j]     = coeffs_[i - j];
+            coeffs_[i - j]  = coeffs_[i - j - 1] * 2.0f - tmp;
         }
         const float tmp = arr1[10 - i + 1] - arr2[0];
-        arr2[0] = coeffs_[0];
-        coeffs_[0] = tmp;
+        arr2[0]         = coeffs_[0];
+        coeffs_[0]      = tmp;
     }
 
     for (uint32_t i = 1; i < 11; i++) {

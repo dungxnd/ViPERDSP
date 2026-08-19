@@ -1,23 +1,23 @@
 #pragma once
 
 #include "MultiBiquad.h"
+#include <array>
 #include <cstdint>
 
 class Subwoofer {
 public:
-    Subwoofer();
+    Subwoofer() noexcept;
 
-    void Process(float *samples, uint32_t size);
+    void Process(float* samples, uint32_t size) noexcept;
 
-    void SetBassGain(uint32_t sampling_rate, float gain_db);
+    void SetBassGain(uint32_t sampling_rate, float gain_db) noexcept;
 
 private:
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
+    float    gain_{0.0f};
+    float    gain_lower_{0.0f};
 
-    float gain_;
-    float gain_lower_;
-
-    MultiBiquad peak_[2];
-    MultiBiquad peak_low_[2];
-    MultiBiquad lowpass_[2];
+    std::array<MultiBiquad, 2> peak_;
+    std::array<MultiBiquad, 2> peak_low_;
+    std::array<MultiBiquad, 2> lowpass_;
 };

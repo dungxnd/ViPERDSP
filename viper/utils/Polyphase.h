@@ -2,6 +2,7 @@
 
 #include "FIR.h"
 #include "WaveBuffer.h"
+#include <array>
 
 class Polyphase {
 public:
@@ -15,10 +16,10 @@ public:
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
-    uint32_t sampling_rate_;
-    uint32_t latency_;
+    uint32_t sampling_rate_{44100u};
+    uint32_t latency_{63u};
 
-    float buffer_[0x7e0];
+    std::array<float, 0x7e0> buffer_{};
 
     FIR fir1_;
     FIR fir2_;

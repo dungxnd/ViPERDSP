@@ -1,5 +1,7 @@
 #include "TubeSimulator.h"
-#include "../constants.h"
+#include <algorithm>
+#include <array>
+#include <cmath>
 
 // Per-model circuit parameters: { TubeModel, Vdd, Rp, bias, output_gain }
 // 12AX7: high-gain stage, classic V4A topology                    (mu≈98,  gm=1.6mA/V)
@@ -42,29 +44,27 @@
 //   c1=4.812e-4, c2=2.949e-2, c0=1.231e-1  →  RMS fit error 6.2%
 //   kp2=c1²=2.3156e-7, kpg=2*c1*c2=2.8386e-5, kp=2*c1*c0=1.1844e-4, mu_local≈28.6
 //   Circuit: Rp=9.1kΩ, bias=-1.3V → Ia_q=17.0mA, Vpk_q=95V (centred swing)
-static constexpr struct {
-    TubeModel   model;
-    double      vdd;
-    double      rp;
-    double      bias;
-    double      output_gain; // level-matching compensation relative to 12AX7
-} kTubeConfigs[] = {
+struct TubeConfig {
+    TubeModel model;
+    double    vdd;
+    double    rp;
+    double    bias;
+    double    output_gain; // level-matching compensation relative to 12AX7
+};
+
+static constexpr std::array<TubeConfig, 5> kTubeConfigs{{
     { { 1.014e-5,   5.498e-8,  1.076e-5  }, 250.0, 100000.0, -1.5, 1.000 },  // 0: 12AX7 (reference)
     { { 4.8753e-5,  8.7966e-7, 5.4189e-5 }, 250.0,  20000.0, -4.0, 2.531 },  // 1: 6N1P  (+8.07 dB comp)
     { { 4.6931e-5,  6.1383e-7, 2.2105e-5 }, 250.0,  22000.0, -8.5, 4.707 },  // 2: 12AU7 (+13.46 dB comp)
     { { 5.0885e-5,  4.4729e-7, 5.6324e-5 }, 250.0, 100000.0, -2.5, 1.085 },  // 3: 12AT7 (+0.71 dB comp)
     { { 1.1844e-4,  2.3156e-7, 2.8386e-5 }, 250.0,   9100.0, -1.3, 1.693 },  // 4: 6DJ8  (+4.57 dB comp)
-};
-static constexpr int kTubeConfigCount = static_cast<int>(sizeof(kTubeConfigs) / sizeof(kTubeConfigs[0]));
+}};
 
-TubeSimulator::TubeSimulator() :
-    enable_(false),
-    tube_type_(TubeType::k12AX7),
-    sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE) {
+TubeSimulator::TubeSimulator() {
     Reset();
 }
 
-void TubeSimulator::Process(float *buffer, const uint32_t size) {
+void TubeSimulator::Process(float *buffer, const uint32_t size) noexcept {
     if (!enable_) return;
 
     // Hoist mix coefficients once per block — avoids repeated float→double widening
@@ -73,6 +73,10 @@ void TubeSimulator::Process(float *buffer, const uint32_t size) {
     const double dry_gain = 1.0 - wet_gain;
 
     for (uint32_t i = 0; i < size; i++) {
+        // Sanitize: Inf/NaN on input would corrupt IIR state permanently.
+        if (!std::isfinite(buffer[i * 2]))     buffer[i * 2]     = 0.0f;
+        if (!std::isfinite(buffer[i * 2 + 1])) buffer[i * 2 + 1] = 0.0f;
+
         const double in_l = buffer[i * 2];
         // Phase-matched dry path: same APF poles as HPF + LPF on the wet chain
         const double dry_l = dry_apf_lpf_[0].ProcessSample(
@@ -96,13 +100,14 @@ void TubeSimulator::Process(float *buffer, const uint32_t size) {
     }
 }
 
-void TubeSimulator::Reset() {
+void TubeSimulator::Reset() noexcept {
     const float lp_cutoff = static_cast<float>(sampling_rate_) / 2.0f - 2000.0f;
 
-    const int idx = static_cast<int>(tube_type_);
-    const auto &cfg = kTubeConfigs[idx < kTubeConfigCount ? idx : 0];
+    const int idx       = static_cast<int>(tube_type_);
+    const auto& cfg     = kTubeConfigs[static_cast<std::size_t>(idx) < kTubeConfigs.size()
+                                        ? idx : 0];
 
-    for (uint32_t ch = 0; ch < 2; ch++) {
+    for (std::size_t ch = 0; ch < 2; ch++) {
         high_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::HIGH_PASS,
             0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
@@ -123,17 +128,15 @@ void TubeSimulator::Reset() {
     }
 }
 
-void TubeSimulator::SetEnable(const bool enable) {
+void TubeSimulator::SetEnable(const bool enable) noexcept {
     if (enable_ != enable) {
-        if (!enable_) {
-            Reset();
-        }
+        if (!enable_) Reset();
         enable_ = enable;
     }
 }
 
-void TubeSimulator::SetTubeType(const int model) {
-    const TubeType t = (model >= 0 && model < kTubeConfigCount)
+void TubeSimulator::SetTubeType(const int model) noexcept {
+    const TubeType t = (model >= 0 && static_cast<std::size_t>(model) < kTubeConfigs.size())
         ? static_cast<TubeType>(model)
         : TubeType::k12AX7;
     if (tube_type_ != t) {
@@ -142,7 +145,7 @@ void TubeSimulator::SetTubeType(const int model) {
     }
 }
 
-void TubeSimulator::SetTubeMode(const int mode) {
+void TubeSimulator::SetTubeMode(const int mode) noexcept {
     const TubeMode t = (mode == 1) ? TubeMode::kWDF : TubeMode::kStatic;
     if (tube_mode_ != t) {
         tube_mode_ = t;
@@ -150,27 +153,23 @@ void TubeSimulator::SetTubeMode(const int mode) {
     }
 }
 
-void TubeSimulator::SetTubeMix(const float mix) {
-    mix_amount_ = (mix < 0.0f) ? 0.0f : (mix > 1.0f) ? 1.0f : mix;
+void TubeSimulator::SetTubeMix(const float mix) noexcept {
+    mix_amount_ = std::clamp(mix, 0.0f, 1.0f);
 }
 
-void TubeSimulator::SetTubeDrive(const float drive) {
+void TubeSimulator::SetTubeDrive(const float drive) noexcept {
     const double d = static_cast<double>(drive);
-    tube_[0].SetDrive(d);
-    tube_[1].SetDrive(d);
-    tube_wdf_[0].SetDrive(d);
-    tube_wdf_[1].SetDrive(d);
+    for (auto& t : tube_)     t.SetDrive(d);
+    for (auto& t : tube_wdf_) t.SetDrive(d);
 }
 
-void TubeSimulator::SetTubeHpfCutoff(const float cutoff_hz) {
+void TubeSimulator::SetTubeHpfCutoff(const float cutoff_hz) noexcept {
     // Clamp to safe operating range [20 Hz – 250 Hz].
-    const float clamped = (cutoff_hz < 20.0f) ? 20.0f
-                        : (cutoff_hz > 250.0f) ? 250.0f
-                        : cutoff_hz;
+    const float clamped = std::clamp(cutoff_hz, 20.0f, 250.0f);
     if (hpf_cutoff_hz_ == clamped) return;
     hpf_cutoff_hz_ = clamped;
     // Update wet HPF and dry APF synchronously — tube DC-blocker state is untouched.
-    for (uint32_t ch = 0; ch < 2; ch++) {
+    for (std::size_t ch = 0; ch < 2; ch++) {
         high_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::HIGH_PASS,
             0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
@@ -180,7 +179,7 @@ void TubeSimulator::SetTubeHpfCutoff(const float cutoff_hz) {
     }
 }
 
-void TubeSimulator::SetSamplingRate(const uint32_t sampling_rate) {
+void TubeSimulator::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate_ != sampling_rate) {
         sampling_rate_ = sampling_rate;
         Reset();

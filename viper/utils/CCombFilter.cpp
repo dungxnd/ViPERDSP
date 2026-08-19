@@ -1,46 +1,37 @@
 #include "CCombFilter.h"
-#include <cstring>
+#include <algorithm>
 
-CCombFilter::CCombFilter() :
-    buffer_size_(0),
-    buffer_index_(0),
-    feedback_(0.0f),
-    filter_store_(0.0f),
-    damp_(0.0f),
-    damp2_(0.0f),
-    buffer_(nullptr) {}
-
-float CCombFilter::Process(const float sample) {
-    const float out = buffer_[buffer_index_];
-    filter_store_ = out * damp2_ + filter_store_ * damp_;
+float CCombFilter::Process(const float sample) noexcept {
+    const float out        = buffer_[buffer_index_];
+    filter_store_          = out * damp2_ + filter_store_ * damp_;
     buffer_[buffer_index_] = sample + filter_store_ * feedback_;
-    buffer_index_ = (buffer_index_ + 1) % buffer_size_;
+    buffer_index_          = (buffer_index_ + 1) % buffer_size_;
     return out;
 }
 
-void CCombFilter::Mute() const {
-    memset(buffer_, 0, buffer_size_ * sizeof(float));
+void CCombFilter::Mute() const noexcept {
+    std::fill_n(buffer_, buffer_size_, 0.0f);
 }
 
-void CCombFilter::SetBuffer(float *buffer, const uint32_t size) {
-    buffer_ = buffer;
-    buffer_size_ = size;
+void CCombFilter::SetBuffer(float* const buffer, const uint32_t size) noexcept {
+    buffer_       = buffer;
+    buffer_size_  = size;
     buffer_index_ = 0;
 }
 
-void CCombFilter::SetDamp(const float value) {
-    damp_ = value;
+void CCombFilter::SetDamp(const float value) noexcept {
+    damp_  = value;
     damp2_ = 1.0f - value;
 }
 
-void CCombFilter::SetFeedback(const float value) {
+void CCombFilter::SetFeedback(const float value) noexcept {
     feedback_ = value;
 }
 
-float CCombFilter::GetDamp() const {
+float CCombFilter::GetDamp() const noexcept {
     return damp_;
 }
 
-float CCombFilter::GetFeedback() const {
+float CCombFilter::GetFeedback() const noexcept {
     return feedback_;
 }

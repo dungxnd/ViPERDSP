@@ -1,52 +1,32 @@
 #include "DynamicEQ.h"
-#include "../constants.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 
-static constexpr float kGainChangeThreshold = 0.1f;
-static constexpr float kOvershootRangeDb = 12.0f;
-static constexpr float kMinEnvelope = 1e-20f;
+namespace {
+constexpr float kGainChangeThreshold = 0.1f;
+constexpr float kOvershootRangeDb    = 12.0f;
+constexpr double kMinEnvelope        = 1e-20;
+} // namespace
 
-DynamicEQ::DynamicEQ() :
-    enable_(false),
-    sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE),
-    band_count_(0) {
-    for (uint32_t i = 0; i < kMaxBands; i++) {
-        params_[i].frequency = 1000.0f;
-        params_[i].q = 1.0f;
-        params_[i].target_gain_db = 0.0f;
-        params_[i].threshold_db = -24.0f;
-        params_[i].attack_ms = 10.0f;
-        params_[i].release_ms = 100.0f;
-        params_[i].filter_type = MultiBiquad::PEAK;
-
-        state_[i].envelope_l = 0.0;
-        state_[i].envelope_r = 0.0;
-        state_[i].smoothed_gain_db = 0.0;
-        state_[i].last_applied_gain_db = 0.0f;
-        state_[i].attack_coeff = 0.0;
-        state_[i].release_coeff = 0.0;
-    }
-
+DynamicEQ::DynamicEQ() {
     Reset();
 }
 
 void DynamicEQ::Process(float *samples, const uint32_t size) {
-    if (!enable_) return;
-    if (band_count_ == 0) return;
-    if (size == 0) return;
+    if (!enable_ || band_count_ == 0 || size == 0) return;
 
     const uint32_t frame_count = size * 2;
 
-    for (uint32_t b = 0; b < band_count_; b++) {
-        double attack_coeff = state_[b].attack_coeff;
-        double release_coeff = state_[b].release_coeff;
-        double env_l = state_[b].envelope_l;
-        double env_r = state_[b].envelope_r;
-        double smoothed_gain = state_[b].smoothed_gain_db;
-        float last_applied = state_[b].last_applied_gain_db;
-        const float target_gain = params_[b].target_gain_db;
-        const float threshold = params_[b].threshold_db;
+    for (uint32_t b = 0; b < band_count_; ++b) {
+        auto attack_coeff  = state_[b].attack_coeff;
+        auto release_coeff = state_[b].release_coeff;
+        auto env_l         = state_[b].envelope_l;
+        auto env_r         = state_[b].envelope_r;
+        auto smoothed_gain = state_[b].smoothed_gain_db;
+        auto last_applied  = state_[b].last_applied_gain_db;
+        const float  target_gain = params_[b].target_gain_db;
+        const auto   threshold   = static_cast<double>(params_[b].threshold_db);
 
         for (uint32_t i = 0; i < frame_count; i += 2) {
             const auto sample_l = static_cast<double>(samples[i]);
@@ -55,53 +35,43 @@ void DynamicEQ::Process(float *samples, const uint32_t size) {
             const double power_l = sample_l * sample_l;
             const double power_r = sample_r * sample_r;
 
-            const double smooth_coeff_l = power_l > env_l ? attack_coeff : release_coeff;
-            env_l += smooth_coeff_l * (power_l - env_l);
+            env_l += (power_l > env_l ? attack_coeff : release_coeff) * (power_l - env_l);
+            env_r += (power_r > env_r ? attack_coeff : release_coeff) * (power_r - env_r);
 
-            const double smooth_coeff_r = power_r > env_r ? attack_coeff : release_coeff;
-            env_r += smooth_coeff_r * (power_r - env_r);
+            const double rms = std::max(std::sqrt(std::max(env_l, env_r)), kMinEnvelope);
+            const double envelope_db   = 20.0 * std::log10(rms);
+            const double overshoot     = envelope_db - threshold;
 
-            double rms_linear = sqrt(std::max(env_l, env_r));
-            if (rms_linear < kMinEnvelope) rms_linear = kMinEnvelope;
-
-            const double envelope_db = 20.0 * log10(rms_linear);
-
-            const double overshoot = envelope_db - static_cast<double>(threshold);
             double desired_gain_db = 0.0;
             if (overshoot > 0.0) {
-                double ratio = overshoot / static_cast<double>(kOvershootRangeDb);
-                if (ratio > 1.0) ratio = 1.0;
+                const double ratio = std::min(overshoot / kOvershootRangeDb, 1.0);
                 desired_gain_db = static_cast<double>(target_gain) * ratio;
             }
 
-            const double gain_coeff = fabs(desired_gain_db) > fabs(smoothed_gain)
-                                          ? attack_coeff
-                                          : release_coeff;
+            const double gain_coeff = (std::abs(desired_gain_db) > std::abs(smoothed_gain))
+                                          ? attack_coeff : release_coeff;
             smoothed_gain += gain_coeff * (desired_gain_db - smoothed_gain);
 
-            const auto current_gain_db = static_cast<float>(smoothed_gain);
-            if (fabs(current_gain_db - last_applied) > kGainChangeThreshold) {
+            if (const auto current_gain_db = static_cast<float>(smoothed_gain);
+                std::abs(current_gain_db - last_applied) > kGainChangeThreshold) {
                 ConfigureApplicationFilter(b, current_gain_db);
                 last_applied = current_gain_db;
             }
 
-            samples[i] = static_cast<float>(apply_l_[b].ProcessSample(sample_l));
+            samples[i]     = static_cast<float>(apply_l_[b].ProcessSample(sample_l));
             samples[i + 1] = static_cast<float>(apply_r_[b].ProcessSample(sample_r));
         }
 
-        state_[b].envelope_l = env_l;
-        state_[b].envelope_r = env_r;
-        state_[b].smoothed_gain_db = smoothed_gain;
-        state_[b].last_applied_gain_db = last_applied;
+        state_[b].envelope_l           = env_l;
+        state_[b].envelope_r           = env_r;
+        state_[b].smoothed_gain_db      = smoothed_gain;
+        state_[b].last_applied_gain_db  = last_applied;
     }
 }
 
 void DynamicEQ::Reset() {
-    for (uint32_t i = 0; i < kMaxBands; i++) {
-        state_[i].envelope_l = 0.0;
-        state_[i].envelope_r = 0.0;
-        state_[i].smoothed_gain_db = 0.0;
-        state_[i].last_applied_gain_db = 0.0f;
+    for (uint32_t i = 0; i < kMaxBands; ++i) {
+        state_[i] = BandState{};
 
         apply_l_[i].Reset();
         apply_r_[i].Reset();
@@ -119,7 +89,7 @@ void DynamicEQ::SetEnable(const bool enable) {
 }
 
 void DynamicEQ::SetBandCount(uint32_t count) {
-    if (count > kMaxBands) count = kMaxBands;
+    count = std::min(count, kMaxBands);
     if (band_count_ != count) {
         band_count_ = count;
         Reset();
@@ -164,62 +134,29 @@ void DynamicEQ::SetBandRelease(const uint32_t band, const float value) {
 }
 
 void DynamicEQ::SetBandFilterType(const uint32_t band, const int value) {
-    MultiBiquad::FilterType resolved;
-    switch (value) {
-        case 0:
-        case MultiBiquad::PEAK:
-            resolved = MultiBiquad::PEAK;
-            break;
-        case 1:
-        case MultiBiquad::LOW_SHELF:
-            resolved = MultiBiquad::LOW_SHELF;
-            break;
-        case 2:
-        case MultiBiquad::HIGH_SHELF:
-            resolved = MultiBiquad::HIGH_SHELF;
-            break;
-        default:
-            resolved = MultiBiquad::PEAK;
-            break;
-    }
-    params_[band].filter_type = resolved;
+    static constexpr std::array<MultiBiquad::FilterType, 3> kTypes{{
+        MultiBiquad::FilterType::PEAK,
+        MultiBiquad::FilterType::LOW_SHELF,
+        MultiBiquad::FilterType::HIGH_SHELF,
+    }};
+    params_[band].filter_type = (value >= 0 && value <= 2)
+        ? kTypes[value]
+        : MultiBiquad::FilterType::PEAK;
     ConfigureApplicationFilter(band, 0.0f);
     state_[band].last_applied_gain_db = 0.0f;
 }
 
 void DynamicEQ::RecalcAttackRelease(const uint32_t band) {
-    const auto attack_sec = static_cast<double>(params_[band].attack_ms) / 1000.0;
-    const auto release_sec = static_cast<double>(params_[band].release_ms) / 1000.0;
     const auto sr = static_cast<double>(sampling_rate_);
+    const auto attack_sec  = static_cast<double>(params_[band].attack_ms)  / 1000.0;
+    const auto release_sec = static_cast<double>(params_[band].release_ms) / 1000.0;
 
-    if (attack_sec > 0.0) {
-        state_[band].attack_coeff = 1.0 - exp(-1.0 / (attack_sec * sr));
-    } else {
-        state_[band].attack_coeff = 1.0;
-    }
-
-    if (release_sec > 0.0) {
-        state_[band].release_coeff = 1.0 - exp(-1.0 / (release_sec * sr));
-    } else {
-        state_[band].release_coeff = 1.0;
-    }
+    state_[band].attack_coeff  = (attack_sec  > 0.0) ? 1.0 - std::exp(-1.0 / (attack_sec  * sr)) : 1.0;
+    state_[band].release_coeff = (release_sec > 0.0) ? 1.0 - std::exp(-1.0 / (release_sec * sr)) : 1.0;
 }
 
 void DynamicEQ::ConfigureApplicationFilter(const uint32_t band, const float gain_db) {
-    apply_l_[band].RefreshFilter(
-        params_[band].filter_type,
-        gain_db,
-        params_[band].frequency,
-        sampling_rate_,
-        params_[band].q,
-        false
-    );
-    apply_r_[band].RefreshFilter(
-        params_[band].filter_type,
-        gain_db,
-        params_[band].frequency,
-        sampling_rate_,
-        params_[band].q,
-        false
-    );
+    const auto& p = params_[band];
+    apply_l_[band].RefreshFilter(p.filter_type, gain_db, p.frequency, sampling_rate_, p.q, false);
+    apply_r_[band].RefreshFilter(p.filter_type, gain_db, p.frequency, sampling_rate_, p.q, false);
 }

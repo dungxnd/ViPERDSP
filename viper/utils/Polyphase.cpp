@@ -1,7 +1,9 @@
 #include "Polyphase.h"
-#include "../constants.h"
+#include <array>
 
-static constexpr float kPolyphaseCoefficients2[] = {
+namespace {
+
+constexpr std::array<float, 63> kPolyphaseCoefficients2 = {
     -0.002339f, -0.002073f, -0.001940f, -0.001675f, -0.001515f, -0.001329f, -0.001223f,
     -0.001037f, -0.000904f, -0.000851f, -0.000532f, -0.000851f, -0.000106f, -0.001010f,
     0.000558f,  -0.001435f, 0.001302f,  -0.001967f, 0.002259f,  -0.002605f, 0.003216f,
@@ -13,7 +15,7 @@ static constexpr float kPolyphaseCoefficients2[] = {
     -0.004970f, -0.004253f, -0.003987f, -0.003482f, -0.003216f, -0.002871f, -0.002578f
 };
 
-static constexpr float kPolyphaseCoefficientsOther[] = {
+constexpr std::array<float, 63> kPolyphaseCoefficientsOther = {
     -0.014194f, -0.002339f, -0.006220f, -0.019722f, -0.020626f, -0.014885f, -0.012240f,
     -0.012386f, -0.011801f, -0.011376f, -0.016293f, -0.018845f, -0.018327f, -0.013902f,
     -0.014951f, -0.015895f, -0.019044f, -0.017928f, -0.020094f, -0.017715f, -0.018845f,
@@ -25,27 +27,27 @@ static constexpr float kPolyphaseCoefficientsOther[] = {
     -0.070955f, 0.021689f,  -0.046607f, -0.025011f, -0.026886f, -0.027271f, -0.032919f
 };
 
+}  // namespace
+
 Polyphase::Polyphase(const int coeff_type) :
-    sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE),
-    latency_(63),
     wave_buffer1_(2, 0x1000),
     wave_buffer2_(2, 0x1000) {
     if (coeff_type == 2) {
-        fir1_.LoadCoefficients(kPolyphaseCoefficients2, 63, 1008);
-        fir2_.LoadCoefficients(kPolyphaseCoefficients2, 63, 1008);
+        fir1_.LoadCoefficients(kPolyphaseCoefficients2.data(), 63, 1008);
+        fir2_.LoadCoefficients(kPolyphaseCoefficients2.data(), 63, 1008);
     } else {
-        fir1_.LoadCoefficients(kPolyphaseCoefficientsOther, 63, 1008);
-        fir2_.LoadCoefficients(kPolyphaseCoefficientsOther, 63, 1008);
+        fir1_.LoadCoefficients(kPolyphaseCoefficientsOther.data(), 63, 1008);
+        fir2_.LoadCoefficients(kPolyphaseCoefficientsOther.data(), 63, 1008);
     }
 }
 
-uint32_t Polyphase::Process(float *samples, const uint32_t size) {
+uint32_t Polyphase::Process(float* samples, const uint32_t size) {
     if (wave_buffer1_.PushSamples(samples, size)) {
         while (wave_buffer1_.GetBufferOffset() >= 1008) {
-            if (wave_buffer1_.PopSamples(buffer_, 1008, false) == 1008) {
-                fir1_.FilterSamplesInterleaved(buffer_, 1008, 2);
-                fir2_.FilterSamplesInterleaved(buffer_ + 1, 1008, 2);
-                wave_buffer2_.PushSamples(buffer_, 1008);
+            if (wave_buffer1_.PopSamples(buffer_.data(), 1008, false) == 1008) {
+                fir1_.FilterSamplesInterleaved(buffer_.data(),     1008, 2);
+                fir2_.FilterSamplesInterleaved(buffer_.data() + 1, 1008, 2);
+                wave_buffer2_.PushSamples(buffer_.data(), 1008);
             }
         }
 
@@ -71,7 +73,5 @@ uint32_t Polyphase::GetLatency() const {
 }
 
 void Polyphase::SetSamplingRate(const uint32_t sampling_rate) {
-    if (sampling_rate_ != sampling_rate) {
-        sampling_rate_ = sampling_rate;
-    }
+    sampling_rate_ = sampling_rate;
 }

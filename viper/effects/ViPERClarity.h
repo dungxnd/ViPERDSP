@@ -3,36 +3,42 @@
 #include "../utils/HiFi.h"
 #include "../utils/HighShelf.h"
 #include "../utils/NoiseSharpening.h"
+#include <array>
+#include <cstdint>
 
 class ViPERClarity {
 public:
-    enum ClarityMode {
-        NATURAL,
-        OZONE,
-        XHIFI
+    enum class ClarityMode {
+        Natural = 0,
+        Ozone   = 1,
+        XHiFi   = 2,
+        // ALL_CAPS aliases for source compatibility
+        NATURAL = Natural,
+        OZONE   = Ozone,
+        XHIFI   = XHiFi,
     };
 
     ViPERClarity();
 
-    void Process(float *samples, uint32_t size);
-    void Reset();
+    void Process(float *samples, uint32_t size) noexcept;
+    void Reset() noexcept;
 
-    void SetEnable(bool enable);
-    void SetProcessMode(ClarityMode mode);
-    void SetClarityGain(float value);
-    void SetClarityToFilter();
-    void SetSamplingRate(uint32_t sampling_rate);
+    void SetEnable(bool enable) noexcept;
+    void SetProcessMode(ClarityMode mode) noexcept;
+    void SetClarityGain(float value) noexcept;
+    void SetClarityToFilter() noexcept;
+    void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    bool enable_;
+    bool enable_{false};
 
-    ClarityMode process_mode_;
+    ClarityMode process_mode_{ClarityMode::Natural};
 
-    uint32_t sampling_rate_;
+    uint32_t sampling_rate_{44100u};
 
-    float gain_;
+    float gain_{0.0f};
 
-    NoiseSharpening noise_sharpening_;
-    HighShelf high_shelf_[2];
-    HiFi hifi_;
+    NoiseSharpening         noise_sharpening_;
+    std::array<HighShelf, 2> high_shelf_{};
+    HiFi                    hifi_;
 };

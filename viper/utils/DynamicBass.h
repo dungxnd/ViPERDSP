@@ -8,28 +8,30 @@ class DynamicBass {
 public:
     DynamicBass();
 
-    void FilterSamples(float *samples, uint32_t size);
-    void Reset();
+    void FilterSamples(float *samples, uint32_t size) noexcept;
+    void Reset() noexcept;
 
-    void SetBassGain(float value);
-    void SetFilterXPassFrequency(uint32_t low, uint32_t high);
-    void SetFilterYPassFrequency(uint32_t low, uint32_t high);
-    void SetSideGain(float gain_x, float gain_y);
-    void SetSamplingRate(uint32_t sampling_rate);
+    void SetBassGain(float value) noexcept;
+    void SetFilterXPassFrequency(uint32_t low, uint32_t high) noexcept;
+    void SetFilterYPassFrequency(uint32_t low, uint32_t high) noexcept;
+    void SetSideGain(float gain_x, float gain_y) noexcept;
+    void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    uint32_t low_freq_x_;
-    uint32_t high_freq_x_;
-    uint32_t low_freq_y_;
-    uint32_t high_freq_y_;
-    uint32_t sampling_rate_;
+    uint32_t low_freq_x_{120};
+    uint32_t high_freq_x_{80};
+    uint32_t low_freq_y_{40};
+    uint32_t high_freq_y_{0};
+    uint32_t sampling_rate_{44100u};
 
-    float q_peak_;
-    float bass_gain_;
-    float side_gain_x_;
-    float side_gain_y_;
+    float q_peak_{0.0f};
+    float bass_gain_{1.0f};
+    float side_gain_x_{1.0f};
+    float side_gain_y_{1.0f};
 
-    PolesFilter filter_x_;
-    PolesFilter filter_y_;
-    Biquad low_pass_;
+    PolesFilter filter_x_{};
+    PolesFilter filter_y_{};
+    Biquad low_pass_{};
+
+    void RecalcLowPass() noexcept;
 };

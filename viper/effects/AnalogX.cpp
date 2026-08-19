@@ -1,79 +1,72 @@
 #include "AnalogX.h"
-#include "../constants.h"
-#include <cstring>
+#include <algorithm>
+#include <array>
+#include <span>
+#include <utility>
 
-static constexpr float kAnalogXHarmonics[] = {
-    0.01f, 0.02f, 0.0001f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f
+static constexpr float kOutputScale = 0.8f;
+
+static constexpr std::array<float, 10> kAnalogXHarmonics{
+    0.01f, 0.02f, 0.0001f, 0.001f, 0.0f,
+    0.0f,  0.0f,  0.0f,    0.0f,   0.0f,
 };
 
-AnalogX::AnalogX() :
-    enable_(false),
-    processing_model_(0),
-    sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE),
-    freq_range_(0),
-    gain_(0.0f) {
+AnalogX::AnalogX() {
     Reset();
 }
 
-void AnalogX::Process(float *samples, const uint32_t size) {
-    if (enable_) {
-        for (uint32_t i = 0; i < size * 2; i += 2) {
-            const double in_l = samples[i];
-            double out_l = high_pass_[0].ProcessSample(in_l);
-            out_l = harmonic_[0].Process(out_l);
-            out_l = low_pass_[0].ProcessSample(in_l + out_l * gain_);
-            out_l = peak_[0].ProcessSample(out_l * 0.8);
-            samples[i] = static_cast<float>(out_l);
+void AnalogX::Process(float* const samples, const uint32_t size) {
+    if (!enable_) return;
 
-            const double in_r = samples[i + 1];
-            double out_r = high_pass_[1].ProcessSample(in_r);
-            out_r = harmonic_[1].Process(out_r);
-            out_r = low_pass_[1].ProcessSample(in_r + out_r * gain_);
-            out_r = peak_[1].ProcessSample(out_r * 0.8);
-            samples[i + 1] = static_cast<float>(out_r);
-        }
+    for (uint32_t i = 0; i < size * 2; i += 2) {
+        const double in_l = samples[i];
+        double out_l = high_pass_[0].ProcessSample(in_l);
+        out_l = harmonic_[0].Process(out_l);
+        out_l = low_pass_[0].ProcessSample(in_l + out_l * gain_);
+        out_l = peak_[0].ProcessSample(out_l * kOutputScale);
+        samples[i] = static_cast<float>(out_l);
 
-        if (freq_range_ < sampling_rate_ / 4) {
-            freq_range_ += size;
-            memset(samples, 0, size * 2 * sizeof(float));
-        }
+        const double in_r = samples[i + 1];
+        double out_r = high_pass_[1].ProcessSample(in_r);
+        out_r = harmonic_[1].Process(out_r);
+        out_r = low_pass_[1].ProcessSample(in_r + out_r * gain_);
+        out_r = peak_[1].ProcessSample(out_r * kOutputScale);
+        samples[i + 1] = static_cast<float>(out_r);
+    }
+
+    if (freq_range_ < sampling_rate_ / 4) {
+        freq_range_ += size;
+        std::fill_n(samples, size * 2, 0.0f);
     }
 }
 
 void AnalogX::Reset() {
-    static constexpr struct {
-        float gain;
-        float cutoff;
-    } models[] = {{0.6f, 19650.0f}, {1.2f, 18233.0f}, {2.4f, 16307.0f}};
+    struct ModelParams { float gain; float cutoff; };
+    static constexpr std::array<ModelParams, 3> kModels{{
+        {0.6f, 19650.0f},
+        {1.2f, 18233.0f},
+        {2.4f, 16307.0f},
+    }};
 
-    high_pass_[0].RefreshFilter(
-        MultiBiquad::FilterType::HIGH_PASS, 0.0f, 240.0f, sampling_rate_, 0.717f, false
-    );
-    high_pass_[1].RefreshFilter(
-        MultiBiquad::FilterType::HIGH_PASS, 0.0f, 240.0f, sampling_rate_, 0.717f, false
-    );
+    using FT = MultiBiquad::FilterType;
 
-    peak_[0].RefreshFilter(
-        MultiBiquad::FilterType::PEAK, 0.58f, 633.0f, sampling_rate_, 6.28f, true
-    );
-    peak_[1].RefreshFilter(
-        MultiBiquad::FilterType::PEAK, 0.58f, 633.0f, sampling_rate_, 6.28f, true
-    );
+    for (auto& f : high_pass_) {
+        f.RefreshFilter(FT::HighPass, {.frequency = 240.0, .sample_rate = sampling_rate_, .q_factor = 0.717});
+    }
+    for (auto& f : peak_) {
+        f.RefreshFilter(FT::Peak, {.gain_db = 0.58, .frequency = 633.0, .sample_rate = sampling_rate_, .q_factor = 6.28, .is_bandwidth = true});
+    }
+    for (auto& h : harmonic_) {
+        h.Reset();
+    }
 
-    harmonic_[0].Reset();
-    harmonic_[1].Reset();
-
-    if (processing_model_ >= 0 && processing_model_ <= 2) {
-        harmonic_[0].SetHarmonics(kAnalogXHarmonics);
-        harmonic_[1].SetHarmonics(kAnalogXHarmonics);
-        gain_ = models[processing_model_].gain;
-        const float cutoff = models[processing_model_].cutoff;
-        low_pass_[0].RefreshFilter(
-            MultiBiquad::FilterType::LOW_PASS, 0.0f, cutoff, sampling_rate_, 0.717f, false
-        );
-        low_pass_[1].RefreshFilter(
-            MultiBiquad::FilterType::LOW_PASS, 0.0f, cutoff, sampling_rate_, 0.717f, false
-        );
+    const auto& m = kModels[static_cast<std::size_t>(std::to_underlying(processing_model_))];
+    gain_ = m.gain;
+    for (auto& h : harmonic_) {
+        h.SetHarmonics(kAnalogXHarmonics);
+    }
+    for (auto& f : low_pass_) {
+        f.RefreshFilter(FT::LowPass, {.frequency = static_cast<double>(m.cutoff), .sample_rate = sampling_rate_, .q_factor = 0.717});
     }
 
     freq_range_ = 0;
@@ -88,7 +81,7 @@ void AnalogX::SetEnable(const bool enable) {
     }
 }
 
-void AnalogX::SetProcessingModel(const int model) {
+void AnalogX::SetProcessingModel(const ProcessingModel model) {
     if (processing_model_ != model) {
         processing_model_ = model;
         Reset();
@@ -100,4 +93,9 @@ void AnalogX::SetSamplingRate(const uint32_t sampling_rate) {
         sampling_rate_ = sampling_rate;
         Reset();
     }
+}
+
+void AnalogX::SetProcessingModel(const int model) {
+    const auto clamped = static_cast<std::size_t>(std::clamp(model, 0, 2));
+    SetProcessingModel(static_cast<ProcessingModel>(clamped));
 }

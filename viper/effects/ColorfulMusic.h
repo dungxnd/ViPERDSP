@@ -2,12 +2,13 @@
 
 #include "../utils/DepthSurround.h"
 #include "../utils/Stereo3DSurround.h"
+#include <cstdint>
 
 class ColorfulMusic {
 public:
     ColorfulMusic();
 
-    void Process(float *samples, uint32_t size);
+    void Process(float* samples, uint32_t size);
     void Reset();
 
     void SetEnable(bool enable);
@@ -17,10 +18,9 @@ public:
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
-    bool enabled_;
-
-    uint32_t sampling_rate_;
+    bool     enabled_      = false;
+    uint32_t sampling_rate_ = 44100;
 
     Stereo3DSurround stereo_3d_surround_;
-    DepthSurround depth_surround_;
+    DepthSurround    depth_surround_;
 };

@@ -1,36 +1,58 @@
 #include "VHE.h"
 #include "../../include/log.h"
-#include "../constants.h"
 #include "VHE_L0.h"
 #include "VHE_L1.h"
 #include "VHE_L2.h"
 #include "VHE_L3.h"
 #include "VHE_L4.h"
-#include <cstring>
+#include <algorithm>
+#include <array>
+#include <cstdint>
 
-VHE::VHE() :
-    enable_(false),
-    sampling_rate_(VIPER_DEFAULT_SAMPLING_RATE),
-    effect_level_(0),
-    conv_size_(0) {
+// Kernel descriptor: pointers and gain for one (level, rate) combination
+struct VheKernel {
+    const float *left;
+    const float *right;
+    float        gain;
+    uint32_t     size;
+};
+
+// Indexed by [effect_level][0=44100, 1=48000]
+static const std::array<std::array<VheKernel, 2>, 5> kVheKernels{{
+    // level 0
+    {{ { kVheL0_44100_L, kVheL0_44100_R, 2.94595f,  4096u },
+       { kVheL0_48000_L, kVheL0_48000_R, 2.94595f,  4096u } }},
+    // level 1
+    {{ { kVheL1_44100_L, kVheL1_44100_R, 0.944061f, 2047u },
+       { kVheL1_48000_L, kVheL1_48000_R, 0.944061f, 2047u } }},
+    // level 2
+    {{ { kVheL2_44100_L, kVheL2_44100_R, 1.544582f, 4096u },
+       { kVheL2_48000_L, kVheL2_48000_R, 1.531516f, 4096u } }},
+    // level 3
+    {{ { kVheL3_44100_L, kVheL3_44100_R, 1.584257f, 4096u },
+       { kVheL3_48000_L, kVheL3_48000_R, 1.567789f, 4096u } }},
+    // level 4
+    {{ { kVheL4_44100_L, kVheL4_44100_R, 1.466681f, 4096u },
+       { kVheL4_48000_L, kVheL4_48000_R, 1.487227f, 4096u } }},
+}};
+
+VHE::VHE() {
     Reset();
 }
 
 uint32_t VHE::Process(const float *source, float *dest, const uint32_t frame_size) {
     if (enable_ && conv_left_.InstanceUsable() && conv_right_.InstanceUsable()) {
         for (uint32_t off = 0; off < frame_size; off += conv_size_) {
-            const uint32_t n =
-                frame_size - off < conv_size_ ? frame_size - off : conv_size_;
+            const uint32_t n = std::min(frame_size - off, conv_size_);
 
             if (source != dest) {
-                memcpy(dest + off * 2, source + off * 2, n * 2 * sizeof(float));
+                std::copy_n(source + off * 2, n * 2, dest + off * 2);
             }
             float *buffer = dest + off * 2;
 
             conv_left_.ConvolveInterleaved(buffer, 0, n);
             conv_right_.ConvolveInterleaved(buffer, 1, n);
         }
-        return frame_size;
     }
     return frame_size;
 }
@@ -41,166 +63,44 @@ void VHE::Reset() {
     conv_right_.Reset();
     conv_right_.UnloadKernel();
 
-    if (effect_level_ > 4) {
+    if (effect_level_ >= kVheKernels.size()) {
         VIPER_LOGD("VHE: Unsupported effect level %d", effect_level_);
         return;
     }
 
-    if (sampling_rate_ != 44100 && sampling_rate_ != 48000) {
+    int rate_idx = -1;
+    if      (sampling_rate_ == 44100u) rate_idx = 0;
+    else if (sampling_rate_ == 48000u) rate_idx = 1;
+    else {
         VIPER_LOGD("VHE: Unsupported sampling rate %d", sampling_rate_);
         return;
     }
 
-    const float *arr_left;
-    const float *arr_right;
-    uint32_t arr_size;
-    float gain;
-
-    switch (effect_level_) {
-        case 0: {
-            switch (sampling_rate_) {
-                case 44100: {
-                    arr_left = kVheL0_44100_L;
-                    arr_right = kVheL0_44100_R;
-                    gain = 2.94595f;
-                    break;
-                }
-                case 48000: {
-                    arr_left = kVheL0_48000_L;
-                    arr_right = kVheL0_48000_R;
-                    gain = 2.94595f;
-                    break;
-                }
-                default: {
-                    VIPER_LOGD("VHE: Unsupported sampling rate %d", sampling_rate_);
-                    return;
-                }
-            }
-            arr_size = 4096;
-            break;
-        }
-        case 1: {
-            switch (sampling_rate_) {
-                case 44100: {
-                    arr_left = kVheL1_44100_L;
-                    arr_right = kVheL1_44100_R;
-                    gain = 0.944061f;
-                    break;
-                }
-                case 48000: {
-                    arr_left = kVheL1_48000_L;
-                    arr_right = kVheL1_48000_R;
-                    gain = 0.944061f;
-                    break;
-                }
-                default: {
-                    VIPER_LOGD("VHE: Unsupported sampling rate %d", sampling_rate_);
-                    return;
-                }
-            }
-            arr_size = 2047;
-            break;
-        }
-        case 2: {
-            switch (sampling_rate_) {
-                case 44100: {
-                    arr_left = kVheL2_44100_L;
-                    arr_right = kVheL2_44100_R;
-                    gain = 1.544582f;
-                    break;
-                }
-                case 48000: {
-                    arr_left = kVheL2_48000_L;
-                    arr_right = kVheL2_48000_R;
-                    gain = 1.531516f;
-                    break;
-                }
-                default: {
-                    VIPER_LOGD("VHE: Unsupported sampling rate %d", sampling_rate_);
-                    return;
-                }
-            }
-            arr_size = 4096;
-            break;
-        }
-        case 3: {
-            switch (sampling_rate_) {
-                case 44100: {
-                    arr_left = kVheL3_44100_L;
-                    arr_right = kVheL3_44100_R;
-                    gain = 1.584257f;
-                    break;
-                }
-                case 48000: {
-                    arr_left = kVheL3_48000_L;
-                    arr_right = kVheL3_48000_R;
-                    gain = 1.567789f;
-                    break;
-                }
-                default: {
-                    VIPER_LOGD("VHE: Unsupported sampling rate %d", sampling_rate_);
-                    return;
-                }
-            }
-            arr_size = 4096;
-            break;
-        }
-        case 4: {
-            switch (sampling_rate_) {
-                case 44100: {
-                    arr_left = kVheL4_44100_L;
-                    arr_right = kVheL4_44100_R;
-                    gain = 1.466681f;
-                    break;
-                }
-                case 48000: {
-                    arr_left = kVheL4_48000_L;
-                    arr_right = kVheL4_48000_R;
-                    gain = 1.487227f;
-                    break;
-                }
-                default: {
-                    VIPER_LOGD("VHE: Unsupported sampling rate %d", sampling_rate_);
-                    return;
-                }
-            }
-            arr_size = 4096;
-            break;
-        }
-        default: {
-            VIPER_LOGD("VHE: Unsupported effect level %d", effect_level_);
-            return;
-        }
-    }
-
-    conv_left_.LoadKernel(arr_left, gain, arr_size, 4096);
-    conv_right_.LoadKernel(arr_right, gain, arr_size, 4096);
-    conv_size_ = 4096;
+    const auto& k = kVheKernels[effect_level_][static_cast<std::size_t>(rate_idx)];
+    conv_left_.LoadKernel(k.left,  k.gain, k.size, 4096u);
+    conv_right_.LoadKernel(k.right, k.gain, k.size, 4096u);
+    conv_size_ = 4096u;
 }
 
-bool VHE::GetEnable() const {
+bool VHE::GetEnable() const noexcept {
     return enable_;
 }
 
-void VHE::SetEnable(const bool enable) {
+void VHE::SetEnable(const bool enable) noexcept {
     if (enable_ != enable) {
         enable_ = enable;
-        if (enable_) {
-            Reset();
-        }
+        if (enable_) Reset();
     }
 }
 
-void VHE::SetEffectLevel(const uint32_t value) {
-    if (effect_level_ != value) {
-        if (value < 5) {
-            effect_level_ = value;
-            Reset();
-        }
+void VHE::SetEffectLevel(const uint32_t value) noexcept {
+    if (effect_level_ != value && value < kVheKernels.size()) {
+        effect_level_ = value;
+        Reset();
     }
 }
 
-void VHE::SetSamplingRate(const uint32_t sampling_rate) {
+void VHE::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate_ != sampling_rate) {
         sampling_rate_ = sampling_rate;
         Reset();

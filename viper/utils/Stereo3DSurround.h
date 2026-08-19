@@ -4,18 +4,18 @@
 
 class Stereo3DSurround {
 public:
-    Stereo3DSurround();
+    Stereo3DSurround() noexcept;
 
-    void Process(float *sample, uint32_t size) const;
+    void Process(float* samples, uint32_t size) const noexcept;
 
-    void SetMiddleImage(float value);
-    void SetStereoWiden(float value);
+    void SetMiddleImage(float value) noexcept;
+    void SetStereoWiden(float value) noexcept;
 
 private:
-    float stereo_widen_;
-    float middle_image_;
-    float coeff_left_;
-    float coeff_right_;
+    float stereo_widen_  = 0.0f;
+    float middle_image_  = 1.0f;
+    float coeff_left_    = 0.5f;
+    float coeff_right_   = 0.5f;
 
-    void ConfigureVariables();
+    void ConfigureVariables() noexcept;
 };

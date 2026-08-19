@@ -5,25 +5,25 @@
 
 class Cure {
 public:
-    Cure();
+    Cure() = default;
 
-    void Process(float *buffer, uint32_t size);
-    void Reset();
+    void Process(float *buffer, uint32_t size) noexcept;
+    void Reset() noexcept;
 
-    [[nodiscard]] uint32_t GetCutoff() const;
-    [[nodiscard]] float GetFeedback() const;
-    [[nodiscard]] float GetLevelDelay() const;
-    [[nodiscard]] Crossfeed::Preset GetPreset() const;
+    [[nodiscard]] uint32_t GetCutoff() const noexcept;
+    [[nodiscard]] float GetFeedback() const noexcept;
+    [[nodiscard]] float GetLevelDelay() const noexcept;
+    [[nodiscard]] Crossfeed::Preset GetPreset() const noexcept;
 
-    void SetEnable(bool enable);
-    void SetCutoff(uint32_t value);
-    void SetFeedback(float value);
-    void SetPreset(uint32_t value);
-    void SetSamplingRate(uint32_t sampling_rate);
+    void SetEnable(bool enable) noexcept;
+    void SetCutoff(uint32_t value) noexcept;
+    void SetFeedback(float value) noexcept;
+    void SetPreset(uint32_t value) noexcept;
+    void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    bool enabled_;
+    bool enabled_{false};
 
-    Crossfeed crossfeed_;
-    PassFilter pass_filter_;
+    Crossfeed crossfeed_{};
+    PassFilter pass_filter_{};
 };

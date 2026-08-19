@@ -1,15 +1,9 @@
 #include "TimeConstDelay.h"
-#include <cstdint>
 
-TimeConstDelay::TimeConstDelay() :
-    offset_(0),
-    sample_count_(0) {}
-
-float TimeConstDelay::ProcessSample(const float sample) {
-    const float val = samples_[offset_];
-    samples_[offset_] = sample;
-    offset_++;
-    if (offset_ >= sample_count_) {
+float TimeConstDelay::ProcessSample(const float sample) noexcept {
+    const float val    = samples_[offset_];
+    samples_[offset_]  = sample;
+    if (++offset_ >= sample_count_) {
         offset_ = 0;
     }
     return val;

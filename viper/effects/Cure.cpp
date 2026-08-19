@@ -1,77 +1,61 @@
 #include "Cure.h"
+#include <array>
 
-Cure::Cure() :
-    enabled_(false) {
-    Reset();
-}
-
-void Cure::Process(float *buffer, const uint32_t size) {
+void Cure::Process(float *buffer, const uint32_t size) noexcept {
     if (!enabled_) return;
 
     crossfeed_.ProcessFrames(buffer, size);
     pass_filter_.ProcessFrames(buffer, size);
 }
 
-void Cure::Reset() {
+void Cure::Reset() noexcept {
     crossfeed_.Reset();
     pass_filter_.Reset();
 }
 
-uint32_t Cure::GetCutoff() const {
+uint32_t Cure::GetCutoff() const noexcept {
     return crossfeed_.GetCutoff();
 }
 
-float Cure::GetFeedback() const {
+float Cure::GetFeedback() const noexcept {
     return crossfeed_.GetFeedback();
 }
 
-float Cure::GetLevelDelay() const {
+float Cure::GetLevelDelay() const noexcept {
     return crossfeed_.GetLevelDelay();
 }
 
-Crossfeed::Preset Cure::GetPreset() const {
+Crossfeed::Preset Cure::GetPreset() const noexcept {
     return crossfeed_.GetPreset();
 }
 
-void Cure::SetEnable(const bool enable) {
+void Cure::SetEnable(const bool enable) noexcept {
     if (enabled_ != enable) {
-        if (enable) {
-            Reset();
-        }
+        if (enable) Reset();
         enabled_ = enable;
     }
 }
 
-void Cure::SetCutoff(const uint32_t value) {
+void Cure::SetCutoff(const uint32_t value) noexcept {
     crossfeed_.SetCutoff(value);
 }
 
-void Cure::SetFeedback(const float value) {
+void Cure::SetFeedback(const float value) noexcept {
     crossfeed_.SetFeedback(value);
 }
 
-void Cure::SetPreset(const uint32_t value) {
-    switch (value) {
-        case 0: {
-            constexpr Crossfeed::Preset preset = {.cutoff = 650, .feedback = 95};
-            crossfeed_.SetPreset(preset);
-            break;
-        }
-        case 1: {
-            constexpr Crossfeed::Preset preset = {.cutoff = 700, .feedback = 60};
-            crossfeed_.SetPreset(preset);
-            break;
-        }
-        case 2: {
-            constexpr Crossfeed::Preset preset = {.cutoff = 700, .feedback = 45};
-            crossfeed_.SetPreset(preset);
-            break;
-        }
-        default:;
+void Cure::SetPreset(const uint32_t value) noexcept {
+    static constexpr std::array<Crossfeed::Preset, 3> kPresets{{
+        {650, 95},
+        {700, 60},
+        {700, 45},
+    }};
+    if (value < 3) {
+        crossfeed_.SetPreset(kPresets[value]);
     }
 }
 
-void Cure::SetSamplingRate(const uint32_t sampling_rate) {
+void Cure::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     crossfeed_.SetSamplingRate(sampling_rate);
     pass_filter_.SetSamplingRate(sampling_rate);
 }
