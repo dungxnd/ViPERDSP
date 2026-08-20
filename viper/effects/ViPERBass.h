@@ -1,27 +1,23 @@
 #pragma once
 
+#include "ViPERBassCommon.h"
 #include "../utils/Biquad.h"
 #include "../utils/Polyphase.h"
 #include "../utils/Subwoofer.h"
 #include "../utils/WaveBuffer.h"
 #include <array>
 #include <cstdint>
+#include <span>
+#include <vector>
 
 class ViPERBass {
 public:
-    enum class ProcessMode {
-        NaturalBass   = 0,
-        PureBassPlus  = 1,
-        Subwoofer     = 2,
-        // ALL_CAPS aliases for source compatibility
-        NATURAL_BASS  = NaturalBass,
-        PURE_BASS_PLUS = PureBassPlus,
-        SUBWOOFER     = Subwoofer,
-    };
+    using ProcessMode = BassProcessMode;
 
     ViPERBass();
 
-    void Process(float *samples, uint32_t size) noexcept;
+    // samples: interleaved stereo, size = frame count (not sample count).
+    void Process(std::span<float> samples) noexcept;
     void Reset() noexcept;
 
     void SetEnable(bool enable) noexcept;
@@ -39,8 +35,9 @@ private:
     uint32_t sampling_rate_{44100u};
     uint32_t frequency_{60u};
 
-    float sampling_rate_period_{1.0f / 44100.0f};
     float anti_pop_{0.0f};
+    // Step per frame for 20 ms fade-in ramp: 1 / (0.020 * sr).
+    float anti_pop_step_{0.0f};
     float bass_factor_{0.0f};
     float bass_factor_smoothed_{0.0f};
     float smoothing_coeff_{0.0f};
@@ -49,14 +46,19 @@ private:
     std::array<float, 2> dc_x1_{};
     std::array<float, 2> dc_y1_{};
 
-    Polyphase           polyphase_{2};
+    Polyphase             polyphase_{2};
     std::array<Biquad, 2> biquad_{};
-    Subwoofer           subwoofer_;
-    WaveBuffer          wave_buffer_{2, 4096};
+    Subwoofer             subwoofer_;
+    WaveBuffer            wave_buffer_{2, 4096};
 
-    void ShapeMix(float* samples, uint32_t i, float bass_l, float bass_r) noexcept;
+    // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend.
+    // Sized in Reset() / SetSamplingRate() to avoid RT-thread allocation.
+    std::vector<float>    scratch_buffer_;
+
+    void ShapeMix(std::span<float> samples, uint32_t i,
+                  float bass_l, float bass_r) noexcept;
     void ApplyAntiPop(float& bass_l, float& bass_r) noexcept;
-    void ProcessNaturalBass(float* samples, uint32_t size) noexcept;
-    void ProcessPureBassPlus(float* samples, uint32_t size) noexcept;
-    void ProcessSubwoofer  (float* samples, uint32_t size) noexcept;
+    void ProcessNaturalBass (std::span<float> samples) noexcept;
+    void ProcessPureBassPlus(std::span<float> samples) noexcept;
+    void ProcessSubwoofer   (std::span<float> samples) noexcept;
 };

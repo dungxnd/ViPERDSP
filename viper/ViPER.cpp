@@ -190,8 +190,8 @@ void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
         dynamic_system_.Process(tmp_buf, tmp_buf_size);
         tube_simulator_.Process(tmp_buf, tmp_buf_size);
         psychoacoustic_bass_.Process(tmp_buf, tmp_buf_size);
-        viper_bass_.Process(tmp_buf, tmp_buf_size);
-        viper_bass_mono_.Process(tmp_buf, tmp_buf_size);
+        viper_bass_.Process({tmp_buf, tmp_buf_size * 2u});
+        viper_bass_mono_.Process({tmp_buf, tmp_buf_size * 2u});
         viper_clarity_.Process(tmp_buf, tmp_buf_size);
         cure_.Process(tmp_buf, tmp_buf_size);
         analog_x_.Process(tmp_buf, tmp_buf_size);
