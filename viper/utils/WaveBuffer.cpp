@@ -69,6 +69,7 @@ uint32_t WaveBuffer::PopSamples(float *dest, const uint32_t size, const bool res
 }
 
 int WaveBuffer::PushSamples(const float *source, const uint32_t size) {
+    if (source == nullptr) return 0;
     if (size > 0) {
         if (const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
             required > buffer_.size()) buffer_.resize(required);

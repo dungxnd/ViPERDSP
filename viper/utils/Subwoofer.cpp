@@ -1,4 +1,5 @@
 #include "Subwoofer.h"
+#include <algorithm>
 #include <cmath>
 
 Subwoofer::Subwoofer() noexcept {
@@ -27,9 +28,14 @@ void Subwoofer::Process(float* samples, const uint32_t size) noexcept {
     }
 }
 
-void Subwoofer::SetBassGain(const uint32_t sampling_rate, const float gain_db) noexcept {
-    gain_       = 20.0f * std::log10(gain_db);
-    gain_lower_ = 20.0f * std::log10(gain_db / 8.0f);
+void Subwoofer::SetBassGain(const uint32_t sampling_rate, const float linear_gain) noexcept {
+    // linear_gain is a linear amplitude multiplier (not dB).
+    // Clamp to a small positive floor to prevent log10(0) = -inf or log10(neg) = NaN,
+    // which would poison all biquad coefficients permanently.
+    // 1e-4f ≈ -80 dB: filters are effectively silent at this floor.
+    const float safe_gain = std::max(linear_gain, 1e-4f);
+    gain_       = 20.0f * std::log10(safe_gain);
+    gain_lower_ = 20.0f * std::log10(safe_gain / 8.0f);
 
     for (auto& p : peak_) {
         p.RefreshFilter(MultiBiquad::FilterType::Peak, gain_, 44.0f, sampling_rate, 0.75f, true);

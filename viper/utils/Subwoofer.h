@@ -10,7 +10,7 @@ public:
 
     void Process(float* samples, uint32_t size) noexcept;
 
-    void SetBassGain(uint32_t sampling_rate, float gain_db) noexcept;
+    void SetBassGain(uint32_t sampling_rate, float linear_gain) noexcept;
 
 private:
     uint32_t sampling_rate_{44100u};

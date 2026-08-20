@@ -69,11 +69,7 @@ void ViPERBass::ProcessPureBassPlus(float* const samples, const uint32_t size) n
         buffer[write_offset + i + 1] = static_cast<float>(biquad_[1].ProcessSample(samples[i + 1]));
     }
 
-    if (polyphase_.Process(samples, size) != size) {
-        // Polyphase did not produce output: pop what we pushed to keep FIFO in sync.
-        wave_buffer_.PopSamples(size, true);
-        return;
-    }
+    if (polyphase_.Process(samples, size) != size) return;
 
     for (uint32_t i = 0; i < size * 2; i += 2) {
         bass_factor_smoothed_ +=
