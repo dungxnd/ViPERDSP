@@ -1,83 +1,113 @@
 #include "ViPERBassMono.h"
 #include <algorithm>
 #include <cmath>
+#include <mdspan>
 #include <numbers>
+#include <utility>
 
 ViPERBassMono::ViPERBassMono() {
+    // scratch_buffer_ must be valid before any Process() call, including at the
+    // default 44100 Hz rate where SetSamplingRate() is never invoked.
+    scratch_buffer_.resize(4096u * 2u, 0.0f);
     biquad_.Reset();
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
     subwoofer_.SetBassGain(sampling_rate_, 0.0f);
     Reset();
 }
 
-void ViPERBassMono::Process(float *samples, const uint32_t size) noexcept {
-    if (!enable_ || size == 0) return;
+void ViPERBassMono::ShapeMix(const float bass, float& left, float& right) noexcept {
+    const float y = dc_block_coeff_ * (dc_y1_ + bass - dc_x1_);
+    dc_x1_ = bass;
+    dc_y1_ = y;
+    const float clipped = BassSoftClip(y, 0.8f);
+    left  = BassSoftClip(left  + clipped, 0.95f);
+    right = BassSoftClip(right + clipped, 0.95f);
+}
 
-    if (anti_pop_ < 1.0f) {
-        for (uint32_t i = 0; i < size * 2; i += 2) {
-            samples[i]     *= anti_pop_;
-            samples[i + 1] *= anti_pop_;
-            anti_pop_ = std::min(anti_pop_ + sampling_rate_period_, 1.0f);
+void ViPERBassMono::ProcessNaturalBass(StereoView audio) noexcept {
+    for (size_t f = 0; f < audio.extent(0); ++f) {
+        bass_factor_smoothed_ +=
+            (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
+        const double sample = (static_cast<double>(audio[f, 0])
+                               + static_cast<double>(audio[f, 1])) * 0.5;
+        float bass = static_cast<float>(biquad_.ProcessSample(sample))
+                     * bass_factor_smoothed_;
+        if (anti_pop_ < 1.0f) {
+            bass      *= anti_pop_;
+            anti_pop_  = std::min(anti_pop_ + anti_pop_step_, 1.0f);
         }
+        ShapeMix(bass, audio[f, 0], audio[f, 1]);
+    }
+}
+
+void ViPERBassMono::ProcessPureBassPlus(std::span<float> samples, StereoView audio) noexcept {
+    const uint32_t size = static_cast<uint32_t>(audio.extent(0));
+
+    if (!wave_buffer_.PushSamples(samples)) return;
+
+    float* const buffer         = wave_buffer_.GetBuffer();
+    const uint32_t write_offset = (wave_buffer_.GetBufferOffset() - size) * 2u;
+
+    // Only channel-0 carries the mono-mixed biquad signal; channel-1 is unused.
+    StereoView delay_write(buffer + write_offset, size, 2u);
+    for (size_t f = 0; f < size; ++f) {
+        const double sample = (static_cast<double>(audio[f, 0])
+                               + static_cast<double>(audio[f, 1])) * 0.5;
+        delay_write[f, 0] = static_cast<float>(biquad_.ProcessSample(sample));
     }
 
-    auto soft_clip = [](const float v, const float knee) noexcept {
-        const float drive = std::fabs(v);
-        if (drive <= knee) return v;
-        const float over   = drive - knee;
-        const float shaped = knee + over / std::sqrt(1.0f + over * over);
-        return v * (shaped / drive);
-    };
+    // Polyphase accumulates 1008 frames before producing output; PopSamples is
+    // called unconditionally so the delay line stays aligned regardless.
+    const bool polyphase_ready = (polyphase_.Process(samples) == size);
 
-    auto shape_mix = [&](float bass, const uint32_t i) noexcept {
-        const float y = dc_block_coeff_ * (dc_y1_ + bass - dc_x1_);
-        dc_x1_ = bass;
-        dc_y1_ = y;
-        bass = soft_clip(y, 0.8f);
-        samples[i]     = soft_clip(samples[i]     + bass, 0.95f);
-        samples[i + 1] = soft_clip(samples[i + 1] + bass, 0.95f);
-    };
+    if (polyphase_ready) {
+        StereoView delay_read(buffer, size, 2u);
+        for (size_t f = 0; f < size; ++f) {
+            bass_factor_smoothed_ +=
+                (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
+            float bass = delay_read[f, 0] * bass_factor_smoothed_;
+            if (anti_pop_ < 1.0f) {
+                bass      *= anti_pop_;
+                anti_pop_  = std::min(anti_pop_ + anti_pop_step_, 1.0f);
+            }
+            ShapeMix(bass, audio[f, 0], audio[f, 1]);
+        }
+    }
+    wave_buffer_.PopSamples(size, true);
+}
 
+void ViPERBassMono::ProcessSubwoofer(std::span<float> samples, StereoView audio) noexcept {
+    if (anti_pop_ >= 1.0f) [[likely]] {
+        subwoofer_.Process(samples);
+        return;
+    }
+
+    // Crossfade dry→wet over anti_pop_ ramp to eliminate the onset transient.
+    const uint32_t size         = static_cast<uint32_t>(audio.extent(0));
+    const uint32_t sample_count = size * 2u;
+    std::copy_n(samples.data(), sample_count, scratch_buffer_.data());
+    subwoofer_.Process(scratch_buffer_.data(), size);
+
+    const StereoView wet(scratch_buffer_.data(), size, 2u);
+    for (size_t f = 0; f < size; ++f) {
+        audio[f, 0] += anti_pop_ * (wet[f, 0] - audio[f, 0]);
+        audio[f, 1] += anti_pop_ * (wet[f, 1] - audio[f, 1]);
+        anti_pop_ = std::min(anti_pop_ + anti_pop_step_, 1.0f);
+    }
+}
+
+void ViPERBassMono::Process(std::span<float> samples) noexcept {
+    if (!enable_ || samples.empty()) return;
+    [[assume(samples.size() % 2 == 0)]];
+
+    StereoView audio(samples.data(), samples.size() / 2, 2u);
+
+    using enum ProcessMode;
     switch (process_mode_) {
-        case ProcessMode::NaturalBass: {
-            for (uint32_t i = 0; i < size * 2; i += 2) {
-                bass_factor_smoothed_ +=
-                    (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
-                const double sample = (static_cast<double>(samples[i])
-                                       + static_cast<double>(samples[i + 1])) / 2.0;
-                const float x = static_cast<float>(biquad_.ProcessSample(sample))
-                                 * bass_factor_smoothed_;
-                shape_mix(x, i);
-            }
-            break;
-        }
-        case ProcessMode::PureBasPlus: {
-            if (wave_buffer_.PushSamples(samples, size)) {
-                float *buffer             = wave_buffer_.GetBuffer();
-                const uint32_t buf_offset = wave_buffer_.GetBufferOffset();
-
-                for (uint32_t i = 0; i < size * 2; i += 2) {
-                    const double sample = (static_cast<double>(samples[i])
-                                           + static_cast<double>(samples[i + 1])) / 2.0;
-                    buffer[buf_offset - size + i / 2] =
-                        static_cast<float>(biquad_.ProcessSample(sample));
-                }
-
-                if (polyphase_.Process(samples, size) == size) {
-                    for (uint32_t i = 0; i < size * 2; i += 2) {
-                        bass_factor_smoothed_ +=
-                            (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
-                        shape_mix(buffer[i / 2] * bass_factor_smoothed_, i);
-                    }
-                    wave_buffer_.PopSamples(size, true);
-                }
-            }
-            break;
-        }
-        case ProcessMode::Subwoofer: {
-            subwoofer_.Process(samples, size);
-            break;
-        }
+        case NaturalBass:  ProcessNaturalBass (audio);          break;
+        case PureBassPlus: ProcessPureBassPlus(samples, audio); break;
+        case Subwoofer:    ProcessSubwoofer   (samples, audio); break;
+        default:           return; // guard against corrupt IPC value
     }
 }
 
@@ -86,15 +116,16 @@ void ViPERBassMono::Reset() noexcept {
     polyphase_.Reset();
     wave_buffer_.Reset();
     wave_buffer_.PushZeros(polyphase_.GetLatency());
+    subwoofer_.Reset(); // clear biquad delay-state before reconfiguring coefficients
     subwoofer_.SetBassGain(sampling_rate_, bass_factor_ * 2.5f);
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
 
-    const auto sr_f        = static_cast<float>(sampling_rate_);
-    sampling_rate_period_  = 1.0f / sr_f;
-    anti_pop_              = 0.0f;
-    smoothing_coeff_       = 1.0f - std::exp(-1.0f / (0.030f * sr_f));
-    bass_factor_smoothed_  = bass_factor_;
-    dc_block_coeff_        = std::exp(-2.0f * std::numbers::pi_v<float> * 18.0f / sr_f);
+    const auto sr_f       = static_cast<float>(sampling_rate_);
+    anti_pop_step_        = 1.0f / (0.020f * sr_f);
+    anti_pop_             = 0.0f;
+    smoothing_coeff_      = 1.0f - std::exp(-1.0f / (0.030f * sr_f));
+    bass_factor_smoothed_ = bass_factor_;
+    dc_block_coeff_       = std::exp(-2.0f * std::numbers::pi_v<float> * 18.0f / sr_f);
     dc_x1_ = 0.0f;
     dc_y1_ = 0.0f;
 }
@@ -107,8 +138,10 @@ void ViPERBassMono::SetEnable(const bool enable) noexcept {
 }
 
 void ViPERBassMono::SetProcessMode(const ProcessMode mode) noexcept {
-    if (process_mode_ != mode) {
-        process_mode_ = mode;
+    const auto safe_mode = static_cast<ProcessMode>(
+        std::clamp(std::to_underlying(mode), uint8_t{0}, uint8_t{2}));
+    if (process_mode_ != safe_mode) {
+        process_mode_ = safe_mode;
         Reset();
     }
 }
@@ -134,11 +167,8 @@ void ViPERBassMono::SetAntiPop(const bool enable) noexcept {
 
 void ViPERBassMono::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate_ != sampling_rate) {
-        sampling_rate_        = sampling_rate;
-        sampling_rate_period_ = 1.0f / static_cast<float>(sampling_rate);
-        polyphase_.SetSamplingRate(sampling_rate_);
-        biquad_.SetLowPassParameter(
-            static_cast<float>(frequency_), sampling_rate_, 0.53f);
-        subwoofer_.SetBassGain(sampling_rate_, bass_factor_ * 2.5f);
+        sampling_rate_ = sampling_rate;
+        scratch_buffer_.resize(4096u * 2u);
+        Reset();
     }
 }

@@ -33,11 +33,11 @@ Polyphase::Polyphase(const int coeff_type) :
     wave_buffer1_(2, 0x1000),
     wave_buffer2_(2, 0x1000) {
     if (coeff_type == 2) {
-        fir1_.LoadCoefficients(kPolyphaseCoefficients2.data(), 63, 1008);
-        fir2_.LoadCoefficients(kPolyphaseCoefficients2.data(), 63, 1008);
+        fir1_.LoadCoefficients(kPolyphaseCoefficients2, 1008);
+        fir2_.LoadCoefficients(kPolyphaseCoefficients2, 1008);
     } else {
-        fir1_.LoadCoefficients(kPolyphaseCoefficientsOther.data(), 63, 1008);
-        fir2_.LoadCoefficients(kPolyphaseCoefficientsOther.data(), 63, 1008);
+        fir1_.LoadCoefficients(kPolyphaseCoefficientsOther, 1008);
+        fir2_.LoadCoefficients(kPolyphaseCoefficientsOther, 1008);
     }
 }
 

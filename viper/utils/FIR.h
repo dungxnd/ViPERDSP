@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 class FIR {
@@ -12,7 +13,7 @@ public:
 
     [[nodiscard]] uint32_t GetBlockLength() const noexcept;
 
-    int LoadCoefficients(const float* coeffs, uint32_t coeffs_size, uint32_t block_length);
+    bool LoadCoefficients(std::span<const float> coeffs, uint32_t block_length);
 
 private:
     bool     has_coefficients_{false};
