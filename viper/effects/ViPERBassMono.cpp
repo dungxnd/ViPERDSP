@@ -1,12 +1,13 @@
 #include "ViPERBassMono.h"
 #include <algorithm>
 #include <cmath>
+#include <mdspan>
 #include <numbers>
 #include <utility>
 
 ViPERBassMono::ViPERBassMono() {
-    // Pre-allocate scratch_buffer_ for worst-case 4096 stereo frames so that
-    // ProcessSubwoofer never hits a null/empty buffer at default 44100 Hz.
+    // scratch_buffer_ must be valid before any Process() call, including at the
+    // default 44100 Hz rate where SetSamplingRate() is never invoked.
     scratch_buffer_.resize(4096u * 2u, 0.0f);
     biquad_.Reset();
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
@@ -14,109 +15,83 @@ ViPERBassMono::ViPERBassMono() {
     Reset();
 }
 
-// DC-block + soft-clip shaping: applies the mono bass signal to both L and R channels.
-void ViPERBassMono::ShapeMix(const float bass, const uint32_t i,
-                              std::span<float> samples) noexcept {
+void ViPERBassMono::ShapeMix(const float bass, float& left, float& right) noexcept {
     const float y = dc_block_coeff_ * (dc_y1_ + bass - dc_x1_);
     dc_x1_ = bass;
     dc_y1_ = y;
     const float clipped = BassSoftClip(y, 0.8f);
-    samples[i]     = BassSoftClip(samples[i]     + clipped, 0.95f);
-    samples[i + 1] = BassSoftClip(samples[i + 1] + clipped, 0.95f);
+    left  = BassSoftClip(left  + clipped, 0.95f);
+    right = BassSoftClip(right + clipped, 0.95f);
 }
 
-// ── ProcessNaturalBass ──────────────────────────────────────────────────────
-// Bug fix: anti-pop now ramps ONLY the wet (bass) signal, not the entire dry
-// stream. Previously the top of Process() would silently fade in the whole
-// audio when anti_pop_ < 1.0, causing a 1-second mute on effect enable.
-void ViPERBassMono::ProcessNaturalBass(std::span<float> samples) noexcept {
-    const uint32_t size = static_cast<uint32_t>(samples.size() / 2);
-    [[assume(samples.size() % 2 == 0)]];
-    for (uint32_t i = 0; i < size * 2; i += 2) {
+void ViPERBassMono::ProcessNaturalBass(StereoView audio) noexcept {
+    for (size_t f = 0; f < audio.extent(0); ++f) {
         bass_factor_smoothed_ +=
             (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
-        const double sample = (static_cast<double>(samples[i])
-                               + static_cast<double>(samples[i + 1])) * 0.5;
+        const double sample = (static_cast<double>(audio[f, 0])
+                               + static_cast<double>(audio[f, 1])) * 0.5;
         float bass = static_cast<float>(biquad_.ProcessSample(sample))
                      * bass_factor_smoothed_;
-        // Ramp only the wet bass component — dry signal is unaffected.
         if (anti_pop_ < 1.0f) {
             bass      *= anti_pop_;
             anti_pop_  = std::min(anti_pop_ + anti_pop_step_, 1.0f);
         }
-        ShapeMix(bass, i, samples);
+        ShapeMix(bass, audio[f, 0], audio[f, 1]);
     }
 }
 
-// ── ProcessPureBassPlus ─────────────────────────────────────────────────────
-// Bug fixes:
-// 1. wave_buffer_ is now channels=2 (was 1), so PushSamples correctly copies
-//    all size*2 interleaved samples — previously only the first `size` floats
-//    were copied (half the stereo data), corrupting the delay line.
-// 2. PopSamples is called UNCONDITIONALLY (after the polyphase check) to keep
-//    the delay line in sync even when polyphase hasn't produced output yet.
-//    Previously, failure to pop when polyphase returned 0 caused wave_buffer_
-//    to accumulate unboundedly, breaking the dry/wet alignment.
-// 3. Biquad write offset: now uses * 2u (stereo stride) to match wave_buffer_
-//    channels=2 layout. Index into bass delay is i (stereo) → channel 0 only
-//    is the mono-mixed biquad signal; we write to even indices.
-void ViPERBassMono::ProcessPureBassPlus(std::span<float> samples) noexcept {
-    const uint32_t size = static_cast<uint32_t>(samples.size() / 2);
+void ViPERBassMono::ProcessPureBassPlus(std::span<float> samples, StereoView audio) noexcept {
+    const uint32_t size = static_cast<uint32_t>(audio.extent(0));
 
-    if (!wave_buffer_.PushSamples(samples.data(), size)) return;
+    if (!wave_buffer_.PushSamples(samples)) return;
 
-    // Write mono-mixed biquad output into channel-0 (even) slots of the delay buffer.
-    // wave_buffer_ channels=2, so each frame occupies 2 floats. We use slot [f*2+0]
-    // for the biquad result; slot [f*2+1] is unused (zeroed from PushSamples).
     float* const buffer         = wave_buffer_.GetBuffer();
     const uint32_t write_offset = (wave_buffer_.GetBufferOffset() - size) * 2u;
 
-    for (uint32_t i = 0; i < size * 2; i += 2) {
-        const double sample = (static_cast<double>(samples[i])
-                               + static_cast<double>(samples[i + 1])) * 0.5;
-        buffer[write_offset + i] = static_cast<float>(biquad_.ProcessSample(sample));
-        // channel-1 slot intentionally left as-is (dry data from PushSamples,
-        // not used during bass read-back below).
+    // Only channel-0 carries the mono-mixed biquad signal; channel-1 is unused.
+    StereoView delay_write(buffer + write_offset, size, 2u);
+    for (size_t f = 0; f < size; ++f) {
+        const double sample = (static_cast<double>(audio[f, 0])
+                               + static_cast<double>(audio[f, 1])) * 0.5;
+        delay_write[f, 0] = static_cast<float>(biquad_.ProcessSample(sample));
     }
 
-    // Polyphase processes the full stereo signal for timing/pitch analysis.
-    // Only mix bass when it has produced a full block.
-    const bool polyphase_ready = (polyphase_.Process(samples.data(), size) == size);
+    // Polyphase accumulates 1008 frames before producing output; PopSamples is
+    // called unconditionally so the delay line stays aligned regardless.
+    const bool polyphase_ready = (polyphase_.Process(samples) == size);
 
     if (polyphase_ready) {
-        for (uint32_t i = 0; i < size * 2; i += 2) {
+        StereoView delay_read(buffer, size, 2u);
+        for (size_t f = 0; f < size; ++f) {
             bass_factor_smoothed_ +=
                 (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
-            float bass = buffer[i] * bass_factor_smoothed_; // channel-0 = biquad output
+            float bass = delay_read[f, 0] * bass_factor_smoothed_;
             if (anti_pop_ < 1.0f) {
                 bass      *= anti_pop_;
                 anti_pop_  = std::min(anti_pop_ + anti_pop_step_, 1.0f);
             }
-            ShapeMix(bass, i, samples);
+            ShapeMix(bass, audio[f, 0], audio[f, 1]);
         }
     }
-    // Always pop to keep wave_buffer_ delay line in sync with the input stream.
     wave_buffer_.PopSamples(size, true);
 }
 
-// ── ProcessSubwoofer ────────────────────────────────────────────────────────
-// Bug fix: replaced RT heap allocation (std::vector wet{...}) with a
-// pre-allocated scratch_buffer_ sized in SetSamplingRate().
-void ViPERBassMono::ProcessSubwoofer(std::span<float> samples) noexcept {
-    const uint32_t size = static_cast<uint32_t>(samples.size() / 2);
-
+void ViPERBassMono::ProcessSubwoofer(std::span<float> samples, StereoView audio) noexcept {
     if (anti_pop_ >= 1.0f) [[likely]] {
-        subwoofer_.Process(samples.data(), size);
+        subwoofer_.Process(samples);
         return;
     }
 
+    // Crossfade dry→wet over anti_pop_ ramp to eliminate the onset transient.
+    const uint32_t size         = static_cast<uint32_t>(audio.extent(0));
     const uint32_t sample_count = size * 2u;
     std::copy_n(samples.data(), sample_count, scratch_buffer_.data());
     subwoofer_.Process(scratch_buffer_.data(), size);
 
-    for (uint32_t i = 0; i < sample_count; i += 2) {
-        samples[i]     += anti_pop_ * (scratch_buffer_[i]     - samples[i]);
-        samples[i + 1] += anti_pop_ * (scratch_buffer_[i + 1] - samples[i + 1]);
+    const StereoView wet(scratch_buffer_.data(), size, 2u);
+    for (size_t f = 0; f < size; ++f) {
+        audio[f, 0] += anti_pop_ * (wet[f, 0] - audio[f, 0]);
+        audio[f, 1] += anti_pop_ * (wet[f, 1] - audio[f, 1]);
         anti_pop_ = std::min(anti_pop_ + anti_pop_step_, 1.0f);
     }
 }
@@ -125,12 +100,14 @@ void ViPERBassMono::Process(std::span<float> samples) noexcept {
     if (!enable_ || samples.empty()) return;
     [[assume(samples.size() % 2 == 0)]];
 
+    StereoView audio(samples.data(), samples.size() / 2, 2u);
+
     using enum ProcessMode;
     switch (process_mode_) {
-        case NaturalBass:  ProcessNaturalBass (samples); break;
-        case PureBassPlus: ProcessPureBassPlus(samples); break;
-        case Subwoofer:    ProcessSubwoofer   (samples); break;
-        default:           return; // unreachable in practice; guard against corrupt IPC value
+        case NaturalBass:  ProcessNaturalBass (audio);          break;
+        case PureBassPlus: ProcessPureBassPlus(samples, audio); break;
+        case Subwoofer:    ProcessSubwoofer   (samples, audio); break;
+        default:           return; // guard against corrupt IPC value
     }
 }
 
@@ -144,7 +121,6 @@ void ViPERBassMono::Reset() noexcept {
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
 
     const auto sr_f       = static_cast<float>(sampling_rate_);
-    // 20 ms anti-pop ramp (down from 1000 ms).
     anti_pop_step_        = 1.0f / (0.020f * sr_f);
     anti_pop_             = 0.0f;
     smoothing_coeff_      = 1.0f - std::exp(-1.0f / (0.030f * sr_f));
@@ -162,9 +138,8 @@ void ViPERBassMono::SetEnable(const bool enable) noexcept {
 }
 
 void ViPERBassMono::SetProcessMode(const ProcessMode mode) noexcept {
-    // Clamp to [0, 2] so an invalid IPC integer never reaches the switch default.
     const auto safe_mode = static_cast<ProcessMode>(
-        std::clamp(static_cast<int>(mode), 0, 2));
+        std::clamp(std::to_underlying(mode), uint8_t{0}, uint8_t{2}));
     if (process_mode_ != safe_mode) {
         process_mode_ = safe_mode;
         Reset();
@@ -193,9 +168,7 @@ void ViPERBassMono::SetAntiPop(const bool enable) noexcept {
 void ViPERBassMono::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate_ != sampling_rate) {
         sampling_rate_ = sampling_rate;
-        // Pre-size the scratch buffer to avoid RT-thread allocation.
         scratch_buffer_.resize(4096u * 2u);
-        // Reset() recalculates all SR-dependent state.
         Reset();
     }
 }

@@ -6,12 +6,15 @@
 #include "../utils/Subwoofer.h"
 #include "../utils/WaveBuffer.h"
 #include <cstdint>
+#include <mdspan>
 #include <span>
 #include <vector>
 
 class ViPERBassMono {
 public:
     using ProcessMode = BassProcessMode;
+    // 2-D view over interleaved stereo audio: [frame, channel].
+    using StereoView = std::mdspan<float, std::dextents<size_t, 2>, std::layout_right>;
 
     ViPERBassMono();
 
@@ -48,15 +51,14 @@ private:
     Polyphase  polyphase_{2};
     Biquad     biquad_;
     Subwoofer  subwoofer_;
-    // Stereo wave_buffer_ (channels=2) so PushSamples correctly handles
-    // interleaved stereo input, matching the biquad delay-line indexing.
+    // channels=2: PushSamples copies all interleaved frames correctly.
     WaveBuffer wave_buffer_{2, 4096};
 
     // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend.
     std::vector<float> scratch_buffer_;
 
-    void ShapeMix(float bass, uint32_t i, std::span<float> samples) noexcept;
-    void ProcessNaturalBass (std::span<float> samples) noexcept;
-    void ProcessPureBassPlus(std::span<float> samples) noexcept;
-    void ProcessSubwoofer   (std::span<float> samples) noexcept;
+    void ShapeMix(float bass, float& left, float& right) noexcept;
+    void ProcessNaturalBass (StereoView audio) noexcept;
+    void ProcessPureBassPlus(std::span<float> samples, StereoView audio) noexcept;
+    void ProcessSubwoofer   (std::span<float> samples, StereoView audio) noexcept;
 };

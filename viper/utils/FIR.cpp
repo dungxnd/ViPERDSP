@@ -1,6 +1,7 @@
 #include "FIR.h"
 #include <algorithm>
 #include <cstdint>
+#include <span>
 
 void FIR::FilterSamplesInterleaved(
     float* samples, const uint32_t size, const uint32_t channels
@@ -41,20 +42,19 @@ void FIR::Reset() noexcept {
     }
 }
 
-int FIR::LoadCoefficients(
-    const float* coeffs, const uint32_t coeffs_size, const uint32_t block_length
-) {
-    if (coeffs == nullptr || coeffs_size == 0 || block_length == 0) return 0;
+bool FIR::LoadCoefficients(std::span<const float> coeffs, const uint32_t block_length) {
+    if (coeffs.empty() || block_length == 0) return false;
 
+    const auto coeffs_size = static_cast<uint32_t>(coeffs.size());
     offset_block_.assign(coeffs_size + block_length + 1, 0.0f);
-    coeffs_.assign(coeffs, coeffs + coeffs_size);
+    coeffs_.assign(coeffs.begin(), coeffs.end());
     block_.assign(block_length, 0.0f);
 
     coeffs_size_  = coeffs_size;
     block_length_ = block_length;
 
     has_coefficients_ = true;
-    return 1;
+    return true;
 }
 
 uint32_t FIR::GetBlockLength() const noexcept {

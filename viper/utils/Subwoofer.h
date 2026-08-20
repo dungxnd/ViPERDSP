@@ -3,12 +3,17 @@
 #include "MultiBiquad.h"
 #include <array>
 #include <cstdint>
+#include <span>
 
 class Subwoofer {
 public:
     Subwoofer() noexcept;
 
     void Process(float* samples, uint32_t size) noexcept;
+    // span overload: size = frames (not interleaved samples).
+    void Process(std::span<float> samples) noexcept {
+        Process(samples.data(), static_cast<uint32_t>(samples.size() / 2u));
+    }
 
     // Clears all biquad delay-state registers to prevent inter-session DC
     // offsets and filter ringing from leaking into a new audio stream.

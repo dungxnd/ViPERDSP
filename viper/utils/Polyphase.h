@@ -3,12 +3,18 @@
 #include "FIR.h"
 #include "WaveBuffer.h"
 #include <array>
+#include <span>
 
 class Polyphase {
 public:
     explicit Polyphase(int coeff_type);
 
     uint32_t Process(float *samples, uint32_t size);
+    // span overload: size = frames (not interleaved samples).
+    uint32_t Process(std::span<float> samples) {
+        return Process(samples.data(),
+                       static_cast<uint32_t>(samples.size() / 2u));
+    }
     void Reset();
 
     [[nodiscard]] uint32_t GetLatency() const;

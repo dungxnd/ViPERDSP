@@ -1,20 +1,17 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 
 // Shared definitions for ViPERBass and ViPERBassMono.
 
 // ---------------------------------------------------------------------------
 // ProcessMode — identical semantics in both stereo and mono variants.
 // ---------------------------------------------------------------------------
-enum class BassProcessMode {
+enum class BassProcessMode : uint8_t {
     NaturalBass  = 0,
     PureBassPlus = 1,
     Subwoofer    = 2,
-    // ALL_CAPS aliases for source compatibility
-    NATURAL_BASS  = NaturalBass,
-    PURE_BASS_PLUS = PureBassPlus,
-    SUBWOOFER     = Subwoofer,
 };
 
 // ---------------------------------------------------------------------------

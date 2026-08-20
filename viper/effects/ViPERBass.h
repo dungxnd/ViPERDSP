@@ -7,12 +7,15 @@
 #include "../utils/WaveBuffer.h"
 #include <array>
 #include <cstdint>
+#include <mdspan>
 #include <span>
 #include <vector>
 
 class ViPERBass {
 public:
     using ProcessMode = BassProcessMode;
+    // 2-D view over interleaved stereo audio: [frame, channel].
+    using StereoView = std::mdspan<float, std::dextents<size_t, 2>, std::layout_right>;
 
     ViPERBass();
 
@@ -52,13 +55,13 @@ private:
     WaveBuffer            wave_buffer_{2, 4096};
 
     // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend.
-    // Sized in Reset() / SetSamplingRate() to avoid RT-thread allocation.
+    // Sized in ctor / SetSamplingRate() to avoid RT-thread allocation.
     std::vector<float>    scratch_buffer_;
 
-    void ShapeMix(std::span<float> samples, uint32_t i,
+    void ShapeMix(float& left, float& right,
                   float bass_l, float bass_r) noexcept;
     void ApplyAntiPop(float& bass_l, float& bass_r) noexcept;
-    void ProcessNaturalBass (std::span<float> samples) noexcept;
-    void ProcessPureBassPlus(std::span<float> samples) noexcept;
-    void ProcessSubwoofer   (std::span<float> samples) noexcept;
+    void ProcessNaturalBass (StereoView audio) noexcept;
+    void ProcessPureBassPlus(std::span<float> samples, StereoView audio) noexcept;
+    void ProcessSubwoofer   (std::span<float> samples, StereoView audio) noexcept;
 };

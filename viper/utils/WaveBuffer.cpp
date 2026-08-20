@@ -68,25 +68,25 @@ uint32_t WaveBuffer::PopSamples(float *dest, const uint32_t size, const bool res
     return 0;
 }
 
-int WaveBuffer::PushSamples(const float *source, const uint32_t size) {
-    if (source == nullptr) return 0;
+bool WaveBuffer::PushSamples(const float *source, const uint32_t size) {
+    if (source == nullptr) return false;
     if (size > 0) {
         if (const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
             required > buffer_.size()) buffer_.resize(required);
         std::copy_n(source, channels_ * size, buffer_.data() + index_);
         index_ += channels_ * size;
     }
-    return 1;
+    return true;
 }
 
-int WaveBuffer::PushZeros(const uint32_t size) {
+bool WaveBuffer::PushZeros(const uint32_t size) {
     if (size > 0) {
         if (const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
             required > buffer_.size()) buffer_.resize(required);
         std::fill_n(buffer_.data() + index_, channels_ * size, 0.0f);
         index_ += channels_ * size;
     }
-    return 1;
+    return true;
 }
 
 float *WaveBuffer::PushZerosGetBuffer(const uint32_t size) {
