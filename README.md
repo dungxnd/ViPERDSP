@@ -6,5 +6,7 @@ ViPERDSP is a standalone audio processing library that provides various audio ef
 
 - **Original work**: Zhuhang and ViPER520 (ViPER4Android)
 - **Reverse engineering**: [Martmists](https://github.com/Martmists-GH), [Iscle](https://github.com/iscle) and [likelikeslike](https://github.com/likelikeslike) ([AndroidAudioMods/ViPERFX_RE](https://github.com/AndroidAudioMods/ViPERFX_RE) and [likelikeslike/ViPERFX_RE](https://github.com/likelikeslike/ViPERFX_RE))
+- **Revamping**: Rewrite effects/implementation based on latest research papers to use new algorithm, method for better audio/CPU/Memory usage.
 
-This is reverse-engineered code. The original intellectual property belongs to Zhuhang and ViPER520. The [AndroidAudioMods/ViPERFX_RE](https://github.com/AndroidAudioMods/ViPERFX_RE) project carries no license and it treated as All Rights Reserved. This project is provided for personal use only. It must not be used for any commercial purpose.
+
+This was a reverse-engineered codebase. The original intellectual property belongs to Zhuhang and ViPER520. The [AndroidAudioMods/ViPERFX_RE](https://github.com/AndroidAudioMods/ViPERFX_RE) project carries no license and it treated as All Rights Reserved. This project is provided for personal use only. It must not be used for any commercial purpose.
