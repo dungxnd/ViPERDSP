@@ -5,6 +5,9 @@
 #include <utility>
 
 ViPERBassMono::ViPERBassMono() {
+    // Pre-allocate scratch_buffer_ for worst-case 4096 stereo frames so that
+    // ProcessSubwoofer never hits a null/empty buffer at default 44100 Hz.
+    scratch_buffer_.resize(4096u * 2u, 0.0f);
     biquad_.Reset();
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
     subwoofer_.SetBassGain(sampling_rate_, 0.0f);
@@ -127,7 +130,7 @@ void ViPERBassMono::Process(std::span<float> samples) noexcept {
         case NaturalBass:  ProcessNaturalBass (samples); break;
         case PureBassPlus: ProcessPureBassPlus(samples); break;
         case Subwoofer:    ProcessSubwoofer   (samples); break;
-        default:           std::unreachable();
+        default:           return; // unreachable in practice; guard against corrupt IPC value
     }
 }
 
@@ -136,6 +139,7 @@ void ViPERBassMono::Reset() noexcept {
     polyphase_.Reset();
     wave_buffer_.Reset();
     wave_buffer_.PushZeros(polyphase_.GetLatency());
+    subwoofer_.Reset(); // clear biquad delay-state before reconfiguring coefficients
     subwoofer_.SetBassGain(sampling_rate_, bass_factor_ * 2.5f);
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
 
@@ -158,8 +162,11 @@ void ViPERBassMono::SetEnable(const bool enable) noexcept {
 }
 
 void ViPERBassMono::SetProcessMode(const ProcessMode mode) noexcept {
-    if (process_mode_ != mode) {
-        process_mode_ = mode;
+    // Clamp to [0, 2] so an invalid IPC integer never reaches the switch default.
+    const auto safe_mode = static_cast<ProcessMode>(
+        std::clamp(static_cast<int>(mode), 0, 2));
+    if (process_mode_ != safe_mode) {
+        process_mode_ = safe_mode;
         Reset();
     }
 }

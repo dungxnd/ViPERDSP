@@ -15,6 +15,10 @@ Subwoofer::Subwoofer() noexcept {
 }
 
 void Subwoofer::Process(float* samples, const uint32_t size) noexcept {
+    // at zero bass gain the transfer function is ~0.5*dry - 0.6*LPF(dry),
+    // which introduces a -6 dB shelf and a phase-cancellation notch at ~380 Hz.
+    // Bypass entirely so the output is unity-gain dry when gain is disabled.
+    if (bypassed_) return;
     for (uint32_t i = 0; i < size * 2; i += 2) {
         double tmp = peak_[0].ProcessSample(samples[i]);
         tmp = peak_low_[0].ProcessSample(tmp);
@@ -29,6 +33,10 @@ void Subwoofer::Process(float* samples, const uint32_t size) noexcept {
 }
 
 void Subwoofer::SetBassGain(const uint32_t sampling_rate, const float linear_gain) noexcept {
+    // Bypass flag: when the caller passes 0.0f the subwoofer is effectively
+    // disabled — Process() returns immediately, preserving unity-gain dry.
+    bypassed_ = (linear_gain <= 0.0f);
+
     // linear_gain is a linear amplitude multiplier (not dB).
     // Clamp to a small positive floor to prevent log10(0) = -inf or log10(neg) = NaN,
     // which would poison all biquad coefficients permanently.
