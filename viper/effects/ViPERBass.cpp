@@ -1,6 +1,7 @@
 #include "ViPERBass.h"
 #include <cmath>
 #include <numbers>
+#include <vector>
 
 ViPERBass::ViPERBass() {
     for (auto& bq : biquad_) {
@@ -58,17 +59,21 @@ void ViPERBass::ProcessNaturalBass(float* const samples, const uint32_t size) no
 void ViPERBass::ProcessPureBassPlus(float* const samples, const uint32_t size) noexcept {
     if (!wave_buffer_.PushSamples(samples, size)) return;
 
-    float* const buffer       = wave_buffer_.GetBuffer();
-    const uint32_t buf_offset = wave_buffer_.GetBufferOffset();
+    // GetBufferOffset() returns frames (index_ / channels_).
+    // Convert to float offset: multiply by 2 (stereo).
+    float* const buffer            = wave_buffer_.GetBuffer();
+    const uint32_t write_offset    = (wave_buffer_.GetBufferOffset() - size) * 2u;
 
     for (uint32_t i = 0; i < size * 2; i += 2) {
-        buffer[buf_offset - size + i] =
-            static_cast<float>(biquad_[0].ProcessSample(samples[i]));
-        buffer[buf_offset - size + i + 1] =
-            static_cast<float>(biquad_[1].ProcessSample(samples[i + 1]));
+        buffer[write_offset + i]     = static_cast<float>(biquad_[0].ProcessSample(samples[i]));
+        buffer[write_offset + i + 1] = static_cast<float>(biquad_[1].ProcessSample(samples[i + 1]));
     }
 
-    if (polyphase_.Process(samples, size) != size) return;
+    if (polyphase_.Process(samples, size) != size) {
+        // Polyphase did not produce output: pop what we pushed to keep FIFO in sync.
+        wave_buffer_.PopSamples(size, true);
+        return;
+    }
 
     for (uint32_t i = 0; i < size * 2; i += 2) {
         bass_factor_smoothed_ +=
@@ -86,13 +91,13 @@ void ViPERBass::ProcessSubwoofer(float* const samples, const uint32_t size) noex
         subwoofer_.Process(samples, size);
         return;
     }
+    // Anti-pop ramp: copy dry, process full block, then blend per-frame.
+    // Avoids per-sample Process() calls that prevent vectorization.
+    std::vector<float> wet(samples, samples + size * 2u);
+    subwoofer_.Process(wet.data(), size);
     for (uint32_t i = 0; i < size * 2; i += 2) {
-        const float dry_l = samples[i];
-        const float dry_r = samples[i + 1];
-        std::array<float, 2> tmp{dry_l, dry_r};
-        subwoofer_.Process(tmp.data(), 1);
-        samples[i]     = dry_l + anti_pop_ * (tmp[0] - dry_l);
-        samples[i + 1] = dry_r + anti_pop_ * (tmp[1] - dry_r);
+        samples[i]     += anti_pop_ * (wet[i]     - samples[i]);
+        samples[i + 1] += anti_pop_ * (wet[i + 1] - samples[i + 1]);
         anti_pop_ = std::min(anti_pop_ + sampling_rate_period_, 1.0f);
     }
 }
@@ -165,13 +170,10 @@ void ViPERBass::SetAntiPop(const bool enable) noexcept {
 
 void ViPERBass::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate_ != sampling_rate) {
-        sampling_rate_        = sampling_rate;
-        sampling_rate_period_ = 1.0f / static_cast<float>(sampling_rate);
-        polyphase_.SetSamplingRate(sampling_rate_);
-        for (auto& bq : biquad_) {
-            bq.SetLowPassParameter(
-                static_cast<float>(frequency_), sampling_rate_, 0.53f);
-        }
-        subwoofer_.SetBassGain(sampling_rate_, bass_factor_ * 2.5f);
+        sampling_rate_ = sampling_rate;
+        // Reset() recalculates all SR-dependent state: dc_block_coeff_,
+        // smoothing_coeff_, sampling_rate_period_, polyphase latency,
+        // wave_buffer_ pre-fill, biquad coeffs, and subwoofer gain.
+        Reset();
     }
 }

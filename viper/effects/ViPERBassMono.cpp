@@ -134,11 +134,10 @@ void ViPERBassMono::SetAntiPop(const bool enable) noexcept {
 
 void ViPERBassMono::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate_ != sampling_rate) {
-        sampling_rate_        = sampling_rate;
-        sampling_rate_period_ = 1.0f / static_cast<float>(sampling_rate);
-        polyphase_.SetSamplingRate(sampling_rate_);
-        biquad_.SetLowPassParameter(
-            static_cast<float>(frequency_), sampling_rate_, 0.53f);
-        subwoofer_.SetBassGain(sampling_rate_, bass_factor_ * 2.5f);
+        sampling_rate_ = sampling_rate;
+        // Reset() recalculates all SR-dependent state: dc_block_coeff_,
+        // smoothing_coeff_, sampling_rate_period_, polyphase latency,
+        // wave_buffer_ pre-fill, biquad coeffs, and subwoofer gain.
+        Reset();
     }
 }
