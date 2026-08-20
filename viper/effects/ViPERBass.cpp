@@ -55,7 +55,7 @@ void ViPERBass::ProcessNaturalBass(float* const samples, const uint32_t size) no
     }
 }
 
-void ViPERBass::ProcessPureBasPlus(float* const samples, const uint32_t size) noexcept {
+void ViPERBass::ProcessPureBassPlus(float* const samples, const uint32_t size) noexcept {
     if (!wave_buffer_.PushSamples(samples, size)) return;
 
     float* const buffer       = wave_buffer_.GetBuffer();
@@ -103,7 +103,7 @@ void ViPERBass::Process(float* const samples, const uint32_t size) noexcept {
     using enum ProcessMode;
     switch (process_mode_) {
         case NaturalBass: ProcessNaturalBass(samples, size); break;
-        case PureBasPlus: ProcessPureBasPlus(samples, size); break;
+        case PureBassPlus: ProcessPureBassPlus(samples, size); break;
         case Subwoofer:   ProcessSubwoofer  (samples, size); break;
     }
 }

@@ -11,11 +11,11 @@ class ViPERBass {
 public:
     enum class ProcessMode {
         NaturalBass   = 0,
-        PureBasPlus   = 1,
+        PureBassPlus  = 1,
         Subwoofer     = 2,
         // ALL_CAPS aliases for source compatibility
         NATURAL_BASS  = NaturalBass,
-        PURE_BASS_PLUS = PureBasPlus,
+        PURE_BASS_PLUS = PureBassPlus,
         SUBWOOFER     = Subwoofer,
     };
 
@@ -57,6 +57,6 @@ private:
     void ShapeMix(float* samples, uint32_t i, float bass_l, float bass_r) noexcept;
     void ApplyAntiPop(float& bass_l, float& bass_r) noexcept;
     void ProcessNaturalBass(float* samples, uint32_t size) noexcept;
-    void ProcessPureBasPlus(float* samples, uint32_t size) noexcept;
+    void ProcessPureBassPlus(float* samples, uint32_t size) noexcept;
     void ProcessSubwoofer  (float* samples, uint32_t size) noexcept;
 };

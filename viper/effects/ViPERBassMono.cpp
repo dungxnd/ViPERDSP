@@ -51,7 +51,7 @@ void ViPERBassMono::Process(float *samples, const uint32_t size) noexcept {
             }
             break;
         }
-        case ProcessMode::PureBasPlus: {
+        case ProcessMode::PureBassPlus: {
             if (wave_buffer_.PushSamples(samples, size)) {
                 float *buffer             = wave_buffer_.GetBuffer();
                 const uint32_t buf_offset = wave_buffer_.GetBufferOffset();

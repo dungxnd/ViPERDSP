@@ -10,11 +10,11 @@ class ViPERBassMono {
 public:
     enum class ProcessMode {
         NaturalBass    = 0,
-        PureBasPlus    = 1,
+        PureBassPlus   = 1,
         Subwoofer      = 2,
         // ALL_CAPS aliases for source compatibility
         NATURAL_BASS   = NaturalBass,
-        PURE_BASS_PLUS = PureBasPlus,
+        PURE_BASS_PLUS = PureBassPlus,
         SUBWOOFER      = Subwoofer,
     };
 
