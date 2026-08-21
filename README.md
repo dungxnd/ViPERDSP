@@ -2,6 +2,8 @@
 
 ViPERDSP is a standalone audio processing library that provides various audio effects and enhancements. It can be integrated into different applications and platforms to enhance audio quality and provide a better listening experience.
 
+This repo is the core of [V4A Root Module](https://github.com/dungxnd/ViPERFX_RE), DSP backend of [V4A App](https://github.com/dungxnd/ViPER4Android).
+
 ## Credits and Legal Notice
 
 - **Original work**: Zhuhang and ViPER520 (ViPER4Android)
