@@ -16,7 +16,9 @@ enum class BassProcessMode : uint8_t {
 
 // ---------------------------------------------------------------------------
 // BassSoftClip — algebraic waveshaper: x/sqrt(1+x²) knee variant.
-// Produces smooth C¹-continuous saturation with odd-order harmonics.
+// Produces smooth C²-continuous saturation with odd-order harmonics.
+// The function value, first derivative, and second derivative are all
+// continuous at the knee threshold (the linear-to-sqrt transition).
 // knee: linear threshold below which signal passes unchanged.
 // Note: ceiling = knee + 1.0 (not a hard 0 dBFS limiter; by design).
 // ---------------------------------------------------------------------------

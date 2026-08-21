@@ -15,20 +15,22 @@ Subwoofer::Subwoofer() noexcept {
 }
 
 void Subwoofer::Process(float* samples, const uint32_t size) noexcept {
-    // at zero bass gain the transfer function is ~0.5*dry - 0.6*LPF(dry),
-    // which introduces a -6 dB shelf and a phase-cancellation notch at ~380 Hz.
     // Bypass entirely so the output is unity-gain dry when gain is disabled.
     if (bypassed_) return;
     for (uint32_t i = 0; i < size * 2; i += 2) {
+        // tmp = bandpass-filtered resonance: lowpass(peak_low(peak(x)) - x)
+        // Output = dry (unity) + resonance, so overall level is preserved.
+        // (The previous 0.5f multiplier on dry caused a permanent -6 dB
+        //  attenuation of full-band content whenever Subwoofer mode was active.)
         double tmp = peak_[0].ProcessSample(samples[i]);
         tmp = peak_low_[0].ProcessSample(tmp);
         tmp = lowpass_[0].ProcessSample(tmp - samples[i]);
-        samples[i] = samples[i] * 0.5f + static_cast<float>(tmp) * 0.6f;
+        samples[i] = samples[i] + static_cast<float>(tmp) * 0.6f;
 
         tmp = peak_[1].ProcessSample(samples[i + 1]);
         tmp = peak_low_[1].ProcessSample(tmp);
         tmp = lowpass_[1].ProcessSample(tmp - samples[i + 1]);
-        samples[i + 1] = samples[i + 1] * 0.5f + static_cast<float>(tmp) * 0.6f;
+        samples[i + 1] = samples[i + 1] + static_cast<float>(tmp) * 0.6f;
     }
 }
 
