@@ -12,10 +12,12 @@ IIRFilter::IIRFilter(const uint32_t bands) {
 }
 
 void IIRFilter::Process(float* const samples, const uint32_t size) noexcept {
-    if (!enable_) return;
+    // bands_ == 0 means no valid coefficients have been set yet; return without
+    // touching the buffer so audio passes through unmodified.
+    if (!enable_ || bands_ == 0 || size == 0) return;
 
     const double* const coeffs = min_phase_iir_coeffs_.GetCoefficients();
-    if (coeffs == nullptr || size == 0) return;
+    if (coeffs == nullptr) return;
 
     for (uint32_t i = 0; i < size; ++i) {
         for (uint32_t j = 0; j < 2; ++j) {
@@ -35,11 +37,17 @@ void IIRFilter::Process(float* const samples, const uint32_t size) noexcept {
                 const double c = coeff1 * buf_[buf_idx + (buf_index2_ - buf_index0_ + 3)];
 
                 const double tmp = a + b - c;
-                buf_[buf_idx + 3] = tmp;
-                accumulated += tmp * band_levels_with_q_[k];
+                // Clamp diverged state to zero so a single bad band does not
+                // poison all subsequent frames via the recursive feedback path.
+                buf_[buf_idx + 3] = std::isfinite(tmp) ? tmp : 0.0;
+                accumulated += buf_[buf_idx + 3] * band_levels_with_q_[k];
             }
 
-            samples[i * 2 + j] = static_cast<float>(accumulated);
+            // If the whole sum is non-finite (e.g. NaN from a corrupt level),
+            // leave the sample untouched rather than zeroing the stream.
+            if (std::isfinite(accumulated)) {
+                samples[i * 2 + j] = static_cast<float>(accumulated);
+            }
         }
 
         buf_index0_ = (buf_index0_ + 1) % 3;

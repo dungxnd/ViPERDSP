@@ -518,8 +518,12 @@ void ViPER::DispatchRawParam(
             break;
         }
         case kParamEqualizerBandLevels: {
-            VIPER_LOGI("EQ: bands_levels=%u", arr_size);
-            iir_filter_.SetBandLevels(reinterpret_cast<float *>(arr), arr_size);
+            // arr_size is a byte count; convert to float count before dispatch so
+            // SetBandLevels does not over-read the buffer or mis-parse int bytes as
+            // IEEE-754 floats.
+            const uint32_t float_count = arr_size / static_cast<uint32_t>(sizeof(float));
+            VIPER_LOGI("EQ: bands_levels=%u floats", float_count);
+            iir_filter_.SetBandLevels(reinterpret_cast<const float *>(arr), float_count);
             break;
         }
         case kParamEqualizerBandCount: {

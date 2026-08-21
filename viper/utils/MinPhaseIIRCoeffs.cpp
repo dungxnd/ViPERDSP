@@ -82,13 +82,20 @@ int MinPhaseIIRCoeffs::UpdateCoeffs(const uint32_t bands, const uint32_t samplin
         default:;
     }
 
-    const double inv_sr = 1.0 / static_cast<double>(sampling_rate);
+    // Clamp usable bandwidth to 49 % of Nyquist so bands that approach or exceed
+    // the Nyquist frequency get a safe reduced center rather than producing
+    // degenerate (NaN / Inf) coefficients.
+    const double nyquist_safe = static_cast<double>(sampling_rate) * 0.49;
+    const double inv_sr       = 1.0 / static_cast<double>(sampling_rate);
 
     for (uint32_t i = 0; i < bands; ++i) {
-        const auto [lower, upper] = Find_F1_F2(band_freqs[i], bandwidth);
+        const double center = std::min(static_cast<double>(band_freqs[i]), nyquist_safe);
+        const auto [lower_raw, upper] = Find_F1_F2(center, bandwidth);
+        // Keep the lower edge below 95 % of Nyquist so cos/sin arguments stay valid.
+        const double lower = std::min(lower_raw, nyquist_safe * 0.95);
 
-        const double x = 2.0 * std::numbers::pi_v<double> * static_cast<double>(band_freqs[i]) * inv_sr;
-        const double y = 2.0 * std::numbers::pi_v<double> * lower * inv_sr;
+        const double x = 2.0 * std::numbers::pi_v<double> * center * inv_sr;
+        const double y = 2.0 * std::numbers::pi_v<double> * lower  * inv_sr;
 
         const double cos_x = std::cos(x);
         const double cos_y = std::cos(y);
@@ -126,6 +133,10 @@ std::optional<double> MinPhaseIIRCoeffs::SolveRoot(
     const double coeff_b,
     const double coeff_c
 ) noexcept {
+    // Guard against d ≈ 0: would produce ±Inf / NaN coefficients that instantly
+    // destabilise the IIR state variables.
+    if (std::abs(coeff_a) < 1e-12) return std::nullopt;
+
     const double x = (coeff_c - coeff_b * coeff_b / (coeff_a * 4.0)) / coeff_a;
     if (x >= 0.0) return std::nullopt;
 
@@ -133,5 +144,13 @@ std::optional<double> MinPhaseIIRCoeffs::SolveRoot(
     const double y = coeff_b / (coeff_a + coeff_a);
     const double a = -y - z;
     const double b = z  - y;
-    return (a > b) ? b : a;
+
+    // The product of the two roots equals 0.25, so exactly one root has |r| < 0.5
+    // (stable pole) and the other has |r| > 0.5 (unstable pole).  Always pick the
+    // stable one; previously the code unconditionally returned 'a' which is the
+    // unstable root whenever d > 0 (high-frequency bands).
+    if (std::abs(a) < 0.5 && std::abs(b) >= 0.5) return a;
+    if (std::abs(b) < 0.5 && std::abs(a) >= 0.5) return b;
+    // Both roots inside unit circle (rare): prefer smaller magnitude.
+    return (std::abs(a) < std::abs(b)) ? a : b;
 }
