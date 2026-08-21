@@ -139,30 +139,19 @@ void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
     uint32_t tmp_buf_size;
 
     if (convolver_.GetEnable() || vhe_.GetEnable()) {
-        if (!wave_buffer_.PushSamples(buffer.data(), size)) {
-            wave_buffer_.Reset();
-            memset(buffer.data(), 0, size * 2 * sizeof(float));
-            return;
-        }
+        // PConvSingle now owns internal FIFOs: process any frame_size in-place.
+        convolver_.Process(buffer.data(), buffer.data(), size);
+        vhe_.Process(buffer.data(), buffer.data(), size);
 
-        float *ptr = wave_buffer_.GetBuffer();
-        uint32_t ret = convolver_.Process(ptr, ptr, size);
-        ret = vhe_.Process(ptr, ptr, ret);
-        wave_buffer_.SetBufferOffset(ret);
-
-        if (!adaptive_buffer_.PushZero(ret)) {
-            wave_buffer_.Reset();
+        if (adaptive_buffer_.PushFrames(buffer.data(), size)) {
+            adaptive_buffer_.SetBufferOffset(size);
+            tmp_buf      = adaptive_buffer_.GetBuffer();
+            tmp_buf_size = size;
+        } else {
             adaptive_buffer_.FlushBuffer();
             memset(buffer.data(), 0, size * 2 * sizeof(float));
             return;
         }
-
-        ptr = adaptive_buffer_.GetBuffer();
-        ret = wave_buffer_.PopSamples(ptr, ret, true);
-        adaptive_buffer_.SetBufferOffset(ret);
-
-        tmp_buf = ptr;
-        tmp_buf_size = ret;
     } else {
         if (adaptive_buffer_.PushFrames(buffer.data(), size)) {
             adaptive_buffer_.SetBufferOffset(size);

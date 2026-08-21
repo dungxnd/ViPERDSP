@@ -2,219 +2,241 @@
 #include "pffft.h"
 #include <algorithm>
 #include <bit>
-#include <cstring>
+#include <cmath>
+#include <ranges>
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
 
 PConvSingle::~PConvSingle() {
     ReleaseResources();
 }
 
-void PConvSingle::Reset() {
-    if (!instance_usable_) return;
-
-    for (uint32_t i = 0; i < segment_count_; ++i) {
-        std::fill_n(input_history_[i], fft_size_, 0.0f);
+void PConvSingle::ReleaseResources() noexcept {
+    for (float* p : filter_segments_) {
+        if (p) pffft_aligned_free(p);
     }
-    std::fill_n(overlap_buffer_, segment_size_, 0.0f);
-    std::fill_n(fft_buffer_,     fft_size_,     0.0f);
-    std::fill_n(accum_buffer_,   fft_size_,     0.0f);
-    std::fill_n(mono_buffer_,    segment_size_, 0.0f);
-    std::fill_n(fft_work_,       fft_size_,     0.0f);
-    delay_line_index_ = 0;
-    input_fill_       = 0;
-}
-
-uint32_t PConvSingle::GetFFTSize()      const noexcept { return segment_size_ * 2; }
-uint32_t PConvSingle::GetSegmentCount() const noexcept { return segment_count_;    }
-uint32_t PConvSingle::GetSegmentSize()  const noexcept { return segment_size_;     }
-bool     PConvSingle::InstanceUsable()  const noexcept { return instance_usable_;  }
-
-void PConvSingle::Convolve(float* const buffer, const uint32_t n) {
-    ConvSegment(buffer, false, 0, n);
-}
-
-void PConvSingle::ConvolveInterleaved(float* const buffer, const int channel, const uint32_t n) {
-    ConvSegment(buffer, true, channel, n);
-}
-
-void PConvSingle::ConvSegment(
-    float* const buffer, const bool interleaved, const int channel, const uint32_t n
-) {
-    if (!instance_usable_ || n == 0) return;
-
-    const uint32_t stride = interleaved ? 2u : 1u;
-    uint32_t done = 0;
-    while (done < n) {
-        const uint32_t room  = segment_size_ - input_fill_;
-        const uint32_t chunk = std::min(n - done, room);
-        ConvChunk(buffer + done * stride, interleaved, channel, chunk);
-        done += chunk;
-    }
-}
-
-void PConvSingle::ConvChunk(
-    float* const buffer, const bool interleaved, const int channel, const uint32_t n
-) {
-    for (uint32_t i = 0; i < n; ++i) {
-        mono_buffer_[input_fill_ + i] =
-            interleaved ? buffer[i * 2 + channel] : buffer[i];
-    }
-
-    std::copy_n(overlap_buffer_,     segment_size_,         fft_buffer_);
-    std::copy_n(mono_buffer_,        input_fill_ + n,       fft_buffer_ + segment_size_);
-    std::fill_n(fft_buffer_ + segment_size_ + input_fill_ + n,
-                segment_size_ - (input_fill_ + n), 0.0f);
-
-    pffft_transform(fft_setup_, fft_buffer_, input_history_[delay_line_index_], fft_work_, PFFFT_FORWARD);
-
-    std::fill_n(accum_buffer_, fft_size_, 0.0f);
-    for (uint32_t k = 0; k < segment_count_; ++k) {
-        const uint32_t idx = (delay_line_index_ - k + segment_count_) % segment_count_;
-        pffft_zconvolve_accumulate(fft_setup_, input_history_[idx], filter_segments_[k], accum_buffer_, 1.0f);
-    }
-
-    pffft_transform(fft_setup_, accum_buffer_, fft_buffer_, fft_work_, PFFFT_BACKWARD);
-
-    const float scale  = 1.0f / static_cast<float>(fft_size_);
-    const float* output = fft_buffer_ + segment_size_ + input_fill_;
-
-    if (interleaved) {
-        for (uint32_t i = 0; i < n; ++i) {
-            buffer[i * 2 + channel] = output[i] * scale;
-        }
-    } else {
-        for (uint32_t i = 0; i < n; ++i) {
-            buffer[i] = output[i] * scale;
-        }
-    }
-
-    input_fill_ += n;
-
-    if (input_fill_ == segment_size_) {
-        std::copy_n(mono_buffer_, segment_size_, overlap_buffer_);
-        delay_line_index_ = (delay_line_index_ + 1) % segment_count_;
-        input_fill_ = 0;
-    }
-}
-
-uint32_t PConvSingle::LoadKernel(
-    const float* const kernel, const uint32_t kernel_size, const uint32_t segment_size
-) {
-    if (kernel && kernel_size >= 2 && segment_size >= 2
-        && std::has_single_bit(segment_size)) {
-        instance_usable_ = false;
-        ReleaseResources();
-        segment_size_ = segment_size;
-        const uint32_t n = ProcessKernel(kernel, kernel_size);
-        if (n != 0) {
-            instance_usable_ = true;
-            return n;
-        }
-        ReleaseResources();
-    }
-    return 0;
-}
-
-uint32_t PConvSingle::LoadKernel(
-    const float* const kernel, const float gain,
-    const uint32_t kernel_size, const uint32_t segment_size
-) {
-    if (kernel && kernel_size >= 2 && segment_size >= 2
-        && std::has_single_bit(segment_size)) {
-        instance_usable_ = false;
-        ReleaseResources();
-        segment_size_ = segment_size;
-        const uint32_t n = ProcessKernel(kernel, gain, kernel_size);
-        if (n != 0) {
-            instance_usable_ = true;
-            return n;
-        }
-        ReleaseResources();
-    }
-    return 0;
-}
-
-uint32_t PConvSingle::ProcessKernel(const float* const kernel, const uint32_t kernel_size) {
-    fft_size_      = segment_size_ * 2;
-    segment_count_ = (kernel_size + segment_size_ - 1) / segment_size_;
-
-    fft_setup_ = pffft_new_setup(static_cast<int>(fft_size_), PFFFT_REAL);
-    if (!fft_setup_) return 0;
-
-    fft_work_       = static_cast<float*>(pffft_aligned_malloc(fft_size_     * sizeof(float)));
-    fft_buffer_     = static_cast<float*>(pffft_aligned_malloc(fft_size_     * sizeof(float)));
-    accum_buffer_   = static_cast<float*>(pffft_aligned_malloc(fft_size_     * sizeof(float)));
-    overlap_buffer_ = static_cast<float*>(pffft_aligned_malloc(segment_size_ * sizeof(float)));
-    mono_buffer_    = static_cast<float*>(pffft_aligned_malloc(segment_size_ * sizeof(float)));
-
-    if (!fft_work_ || !fft_buffer_ || !accum_buffer_ || !overlap_buffer_ || !mono_buffer_) {
-        return 0;
-    }
-
-    std::fill_n(overlap_buffer_, segment_size_, 0.0f);
-    std::fill_n(mono_buffer_,    segment_size_, 0.0f);
-
-    filter_segments_.resize(segment_count_, nullptr);
-    input_history_.resize(segment_count_, nullptr);
-    for (uint32_t i = 0; i < segment_count_; ++i) {
-        filter_segments_[i] = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
-        input_history_[i]   = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
-        std::fill_n(input_history_[i], fft_size_, 0.0f);
-    }
-
-    for (uint32_t i = 0; i < segment_count_; ++i) {
-        std::fill_n(fft_buffer_, fft_size_, 0.0f);
-        const uint32_t offset = i * segment_size_;
-        const uint32_t count  = std::min(kernel_size - offset, segment_size_);
-        std::copy_n(kernel + offset, count, fft_buffer_);
-        pffft_transform(fft_setup_, fft_buffer_, filter_segments_[i], fft_work_, PFFFT_FORWARD);
-    }
-
-    delay_line_index_ = 0;
-    return segment_count_;
-}
-
-uint32_t PConvSingle::ProcessKernel(
-    const float* const kernel, const float gain, const uint32_t kernel_size
-) {
-    auto* const scaled = static_cast<float*>(pffft_aligned_malloc(kernel_size * sizeof(float)));
-    if (!scaled) return 0;
-    for (uint32_t i = 0; i < kernel_size; ++i) {
-        scaled[i] = kernel[i] * gain;
-    }
-    const uint32_t result = ProcessKernel(scaled, kernel_size);
-    pffft_aligned_free(scaled);
-    return result;
-}
-
-void PConvSingle::ReleaseResources() {
-    for (float* p : filter_segments_) { pffft_aligned_free(p); }
     filter_segments_.clear();
 
-    for (float* p : input_history_) { pffft_aligned_free(p); }
-    input_history_.clear();
+    for (float* p : fdl_segments_) {
+        if (p) pffft_aligned_free(p);
+    }
+    fdl_segments_.clear();
 
-    auto free_if = [](float*& p) {
+    auto free_aligned = [](float*& p) noexcept {
         if (p) { pffft_aligned_free(p); p = nullptr; }
     };
-    free_if(overlap_buffer_);
-    free_if(fft_buffer_);
-    free_if(accum_buffer_);
-    free_if(mono_buffer_);
-    free_if(fft_work_);
+    free_aligned(fft_in_);
+    free_aligned(fft_out_);
+    free_aligned(fft_work_);
+    free_aligned(accum_spectrum_);
 
     if (fft_setup_) {
         pffft_destroy_setup(fft_setup_);
         fft_setup_ = nullptr;
     }
 
-    instance_usable_   = false;
-    segment_count_     = 0;
-    segment_size_      = 0;
-    fft_size_          = 0;
-    delay_line_index_  = 0;
+    instance_usable_ = false;
+    segment_count_   = 0;
+    segment_size_    = 0;
+    fft_size_        = 0;
+    fdl_index_       = 0;
 }
 
-void PConvSingle::UnloadKernel() {
-    instance_usable_ = false;
+void PConvSingle::UnloadKernel() noexcept {
     ReleaseResources();
+}
+
+// ---------------------------------------------------------------------------
+// Reset — clear all state, pre-fill output FIFO to establish pipeline delay
+// ---------------------------------------------------------------------------
+
+void PConvSingle::Reset() noexcept {
+    if (!instance_usable_) return;
+
+    fdl_index_ = 0;
+    std::ranges::fill(prev_input_, 0.0f);
+
+    for (uint32_t p = 0; p < segment_count_; ++p) {
+        std::fill_n(fdl_segments_[p], fft_size_, 0.0f);
+    }
+
+    input_fifo_.Reset();
+    output_fifo_.Reset();
+
+    // Pre-load the output FIFO with one block of silence so that the first
+    // call to Process/ProcessInterleaved can immediately pop L samples back.
+    // This implements the mandatory L-sample pipeline latency of UPOLS.
+    output_fifo_.WriteZeros(segment_size_);
+}
+
+// ---------------------------------------------------------------------------
+// Kernel loading
+// ---------------------------------------------------------------------------
+
+uint32_t PConvSingle::LoadKernel(const float* const kernel, const uint32_t kernel_size,
+                                 const uint32_t segment_size) {
+    return LoadKernel(kernel, 1.0f, kernel_size, segment_size);
+}
+
+uint32_t PConvSingle::LoadKernel(const float* const kernel, const float gain,
+                                 const uint32_t kernel_size, const uint32_t segment_size) {
+    if (!kernel || kernel_size < 2 || segment_size < 32 || !std::has_single_bit(segment_size)) {
+        return 0;
+    }
+
+    ReleaseResources();
+
+    segment_size_  = segment_size;
+    fft_size_      = segment_size * 2u;
+    segment_count_ = (kernel_size + segment_size - 1u) / segment_size;
+
+    fft_setup_ = pffft_new_setup(static_cast<int>(fft_size_), PFFFT_REAL);
+    if (!fft_setup_) return 0;
+
+    fft_in_         = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
+    fft_out_        = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
+    fft_work_       = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
+    accum_spectrum_ = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
+
+    if (!fft_in_ || !fft_out_ || !fft_work_ || !accum_spectrum_) {
+        ReleaseResources();
+        return 0;
+    }
+
+    prev_input_.assign(segment_size_, 0.0f);
+    filter_segments_.resize(segment_count_, nullptr);
+    fdl_segments_.resize(segment_count_, nullptr);
+
+    for (uint32_t p = 0; p < segment_count_; ++p) {
+        filter_segments_[p] = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
+        fdl_segments_[p]    = static_cast<float*>(pffft_aligned_malloc(fft_size_ * sizeof(float)));
+        if (!filter_segments_[p] || !fdl_segments_[p]) {
+            ReleaseResources();
+            return 0;
+        }
+        std::fill_n(fdl_segments_[p], fft_size_, 0.0f);
+
+        // Build one IR partition: [h[p*L .. p*L+L-1], 0 ... 0]
+        std::fill_n(fft_in_, fft_size_, 0.0f);
+        const uint32_t offset     = p * segment_size_;
+        const uint32_t copy_count = std::min(kernel_size - offset, segment_size_);
+        for (uint32_t i = 0; i < copy_count; ++i) {
+            fft_in_[i] = kernel[offset + i] * gain;
+        }
+        pffft_transform(fft_setup_, fft_in_, filter_segments_[p], fft_work_, PFFFT_FORWARD);
+    }
+
+    // Allocate FIFOs with at least 4× partition size capacity
+    const std::size_t fifo_cap = std::max<std::size_t>(segment_size_ * 4u, 8192u);
+    input_fifo_.Init(fifo_cap);
+    output_fifo_.Init(fifo_cap);
+
+    instance_usable_ = true;
+    Reset();
+    return segment_count_;
+}
+
+// ---------------------------------------------------------------------------
+// Core Processing
+// ---------------------------------------------------------------------------
+
+void PConvSingle::Process(const float* const input, float* const output,
+                          const uint32_t n) noexcept {
+    if (!instance_usable_ || n == 0) {
+        if (input != output) std::copy_n(input, n, output);
+        return;
+    }
+
+    // Chunk input in segment_size_ steps so the FIFO never overflows
+    // regardless of how large n is (offline / batch hosts may pass n >> L).
+    uint32_t processed = 0;
+    while (processed < n) {
+        const uint32_t chunk = std::min(n - processed, segment_size_);
+        input_fifo_.Write(input + processed, chunk);
+
+        while (input_fifo_.AvailableRead() >= segment_size_) {
+            ProcessBlock();
+        }
+
+        const std::size_t avail   = output_fifo_.AvailableRead();
+        const std::size_t to_read = std::min<std::size_t>(chunk, avail);
+        output_fifo_.Read(output + processed, to_read);
+
+        if (to_read < chunk) {
+            std::fill_n(output + processed + to_read, chunk - to_read, 0.0f);
+        }
+
+        processed += chunk;
+    }
+}
+
+void PConvSingle::ProcessInterleaved(const float* const input, float* const output,
+                                     const uint32_t channel, const uint32_t stride,
+                                     const uint32_t n) noexcept {
+    if (!instance_usable_ || n == 0) return;
+
+    // Deinterleave channel into input FIFO
+    for (uint32_t i = 0; i < n; ++i) {
+        const float s = input[i * stride + channel];
+        input_fifo_.Write(&s, 1u);
+    }
+
+    while (input_fifo_.AvailableRead() >= segment_size_) {
+        ProcessBlock();
+    }
+
+    // Reinterleave output FIFO back into the output buffer
+    for (uint32_t i = 0; i < n; ++i) {
+        if (output_fifo_.AvailableRead() > 0u) {
+            float s = 0.0f;
+            output_fifo_.Read(&s, 1u);
+            output[i * stride + channel] = s;
+        } else {
+            output[i * stride + channel] = 0.0f;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Single UPOLS block — called when input_fifo_ has >= L samples
+// ---------------------------------------------------------------------------
+
+void PConvSingle::ProcessBlock() noexcept {
+    // 1. Construct the 2L time-domain block: [x_prev(L), x_curr(L)]
+    std::copy_n(prev_input_.data(), segment_size_, fft_in_);
+    input_fifo_.Read(fft_in_ + segment_size_, segment_size_);
+    // Save current block as next iteration's "previous" L samples
+    std::copy_n(fft_in_ + segment_size_, segment_size_, prev_input_.data());
+
+    // 2. Forward FFT → store in current FDL slot
+    pffft_transform(fft_setup_, fft_in_, fdl_segments_[fdl_index_], fft_work_, PFFFT_FORWARD);
+
+    // 3. Frequency-domain multiply-accumulate across all P partitions
+    std::fill_n(accum_spectrum_, fft_size_, 0.0f);
+    for (uint32_t p = 0; p < segment_count_; ++p) {
+        const uint32_t slot = (fdl_index_ - p + segment_count_) % segment_count_;
+        pffft_zconvolve_accumulate(
+            fft_setup_,
+            fdl_segments_[slot],
+            filter_segments_[p],
+            accum_spectrum_,
+            1.0f
+        );
+    }
+
+    // 4. Inverse FFT → time domain
+    pffft_transform(fft_setup_, accum_spectrum_, fft_out_, fft_work_, PFFFT_BACKWARD);
+
+    // 5. Overlap-Save: discard first L (aliased), keep second L [L .. 2L-1],
+    //    applying 1/N normalisation required by PFFFT unnormalised IFFT.
+    const float norm = 1.0f / static_cast<float>(fft_size_);
+    for (uint32_t i = segment_size_; i < fft_size_; ++i) {
+        fft_out_[i] *= norm;
+    }
+    output_fifo_.Write(fft_out_ + segment_size_, segment_size_);
+
+    // 6. Advance the FDL circular index
+    fdl_index_ = (fdl_index_ + 1u) % segment_count_;
 }

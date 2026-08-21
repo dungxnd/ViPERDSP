@@ -21,7 +21,6 @@ private:
 
     uint32_t sampling_rate_{44100u};
     uint32_t effect_level_{0u};
-    uint32_t conv_size_{0u};
 
     PConvSingle conv_left_;
     PConvSingle conv_right_;

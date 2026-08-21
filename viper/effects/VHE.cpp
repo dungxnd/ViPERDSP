@@ -68,19 +68,22 @@ VHE::VHE() {
 }
 
 uint32_t VHE::Process(const float *source, float *dest, const uint32_t frame_size) {
-    if (enable_ && conv_left_.InstanceUsable() && conv_right_.InstanceUsable()) {
-        for (uint32_t off = 0; off < frame_size; off += conv_size_) {
-            const uint32_t n = std::min(frame_size - off, conv_size_);
-
-            if (source != dest) {
-                std::copy_n(source + off * 2, n * 2, dest + off * 2);
-            }
-            float *buffer = dest + off * 2;
-
-            conv_left_.ConvolveInterleaved(buffer, 0, n);
-            conv_right_.ConvolveInterleaved(buffer, 1, n);
+    if (!enable_ || !conv_left_.InstanceUsable() || !conv_right_.InstanceUsable()
+        || frame_size == 0) {
+        if (source != dest && frame_size > 0) {
+            std::copy_n(source, frame_size * 2u, dest);
         }
+        return frame_size;
     }
+
+    if (source != dest) {
+        std::copy_n(source, frame_size * 2u, dest);
+    }
+
+    // PConvSingle owns FIFOs; handle arbitrary frame_size directly.
+    conv_left_.ProcessInterleaved(dest, dest, 0u, 2u, frame_size);
+    conv_right_.ProcessInterleaved(dest, dest, 1u, 2u, frame_size);
+
     return frame_size;
 }
 
@@ -109,7 +112,6 @@ void VHE::Reset() {
     auto right = Dequantize(k.right, k.size, k.gain_r);
     conv_left_.LoadKernel(left.data(),  1.0f, k.size, 4096u);
     conv_right_.LoadKernel(right.data(), 1.0f, k.size, 4096u);
-    conv_size_ = 4096u;
 }
 
 bool VHE::GetEnable() const noexcept {

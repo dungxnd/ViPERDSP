@@ -20,24 +20,26 @@ static void ApplyCrossChannel(float* const buf, const uint32_t n, const float cc
 uint32_t Convolver::Process(
     const float* const source, float* const dest, const uint32_t frame_size
 ) {
-    if (enable_ && kernel_ch1_.InstanceUsable() && kernel_ch2_.InstanceUsable()) {
-        constexpr auto seg = static_cast<uint32_t>(kConvSegmentSize);
-        for (uint32_t off = 0; off < frame_size; off += seg) {
-            const uint32_t n = std::min(frame_size - off, seg);
-
-            if (source != dest) {
-                std::copy_n(source + off * 2, n * 2, dest + off * 2);
-            }
-            float* const buf_ptr = dest + off * 2;
-
-            kernel_ch1_.ConvolveInterleaved(buf_ptr, 0, n);
-            kernel_ch2_.ConvolveInterleaved(buf_ptr, 1, n);
-
-            if (is_valid_cross_channel_) {
-                ApplyCrossChannel(buf_ptr, n, cross_channel_);
-            }
+    if (!enable_ || !kernel_ch1_.InstanceUsable() || !kernel_ch2_.InstanceUsable()
+        || frame_size == 0) {
+        if (source != dest && frame_size > 0) {
+            std::copy_n(source, frame_size * 2u, dest);
         }
+        return frame_size;
     }
+
+    if (source != dest) {
+        std::copy_n(source, frame_size * 2u, dest);
+    }
+
+    // PConvSingle now owns decoupling FIFOs; process arbitrary frame_size directly.
+    kernel_ch1_.ProcessInterleaved(dest, dest, 0u, 2u, frame_size);
+    kernel_ch2_.ProcessInterleaved(dest, dest, 1u, 2u, frame_size);
+
+    if (is_valid_cross_channel_) {
+        ApplyCrossChannel(dest, frame_size, cross_channel_);
+    }
+
     return frame_size;
 }
 
