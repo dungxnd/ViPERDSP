@@ -1,4 +1,5 @@
 #include "Polyphase.h"
+#include <algorithm>
 #include <ranges>
 
 namespace {
