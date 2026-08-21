@@ -48,14 +48,17 @@ private:
     };
 
     static constexpr float kDefaultLevelQ = 0.636f;
+    static constexpr float kAntiDenormal  = 1e-25f;
 
     bool     enable_{false};
+    bool     gains_dirty_{false};  // true while target != current; clears on convergence
     uint32_t bands_{0};
     uint32_t sampling_rate_{44100u};
 
-    // Gain smoother coefficient: 1 - exp(-1 / (τ_gain · Fs)), τ = 20 ms.
     // Precomputed in ctor / SetSamplingRate so Process() pays no exp() cost.
-    float    gain_smooth_coeff_{0.0f};
+    float gain_smooth_coeff_{0.0f};
+    float fade_in_gain_{1.0f};   // [0,1] ramp applied on first enable; 1 = fully on
+    float fade_in_step_{0.0f};   // increment per frame = 1 / (0.010 · Fs), i.e. 10 ms
 
     // 2 channels × kMaxBands TDF-II delay registers.
     std::array<std::array<BiquadState, kMaxBands>, 2> state_{};
@@ -67,5 +70,5 @@ private:
 
     MinPhaseIIRCoeffs min_phase_iir_coeffs_;
 
-    void UpdateGainSmoothCoeff() noexcept;
+    void UpdateCoeffConstants() noexcept;  // updates gain_smooth_coeff_ + fade_in_step_
 };
