@@ -48,7 +48,6 @@ private:
     };
 
     static constexpr float kDefaultLevelQ = 0.636f;
-    static constexpr float kAntiDenormal  = 1e-25f;
 
     bool     enable_{false};
     bool     gains_dirty_{false};  // true while target != current; clears on convergence
