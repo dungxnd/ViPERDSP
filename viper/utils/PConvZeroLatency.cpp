@@ -47,14 +47,14 @@ void PConvZeroLatency::UnloadKernel() noexcept {
 // ---------------------------------------------------------------------------
 // Reset — clear all delay-state to silence.
 //
-//   The tail engine emits kTailBlock=64 output samples per FFT block.
-//   It fires for the first time after kTailBlock=64 input samples arrive.
-//   Those 64 output samples represent y_tail[0..63] and must be read at the
-//   same time as y_head[0..63].
+//   The tail engine emits kTailBlock=128 output samples per FFT block.
+//   It fires for the first time after kTailBlock=128 input samples arrive.
+//   Those 128 output samples represent y_tail[0..127] and must be read at the
+//   same time as y_head[0..127].
 //   Therefore the output FIFO starts EMPTY — no pre-fill needed.
 //   The causal delay is already guaranteed by the overlap-save math: the
-//   first B=64 clean output samples of the tail come out exactly when the
-//   head has also processed 64 samples.
+//   first B=128 clean output samples of the tail come out exactly when the
+//   head has also processed 128 samples.
 // ---------------------------------------------------------------------------
 
 void PConvZeroLatency::Reset() noexcept {
@@ -109,8 +109,9 @@ bool PConvZeroLatency::LoadKernel(const std::span<const float> kernel,
     }
 
     // ---- Stage 1: Uniform OLS tail on h[K..L-1] ----------------------------
-    // OLS parameters: B=64 (new input per block), R=128 (FFT size), overlap=B.
-    // Each partition covers B=64 IR taps. J = ceil((L-K) / B).
+    // OLS parameters: B=128 (new input per block), R=256 (FFT size), overlap=B.
+    // Each partition covers B=128 IR taps. J = ceil((L-K) / B).
+    // 4096-tap HRIR → J = ceil((4096-128)/128) = 31 partitions (was 63 at K=64).
     const uint32_t tail_len = size - kHeadLen;
     tail_partition_count_   = (tail_len + kTailBlock - 1u) / kTailBlock;
 
@@ -193,7 +194,7 @@ void PConvZeroLatency::Process(const float* const input,
     for (uint32_t i = 0; i < n; ++i) {
         const float in = input[i];
 
-        // --- Head: direct-form FIR, K=64, 0 latency -------------------------
+        // --- Head: direct-form FIR, K=128, 0 latency ------------------------
         // Double-buffer write: keeps head_history_[j] == head_history_[j+K] so
         // any K-sample window starting at head_idx_+1 is contiguous in memory.
         head_history_[head_idx_]             = in;
@@ -267,16 +268,16 @@ void PConvZeroLatency::ProcessInterleaved(const float* const input,
 }
 
 // ---------------------------------------------------------------------------
-// ProcessTailBlock — OLS block with R=128, B=64, overlap=64.
+// ProcessTailBlock — OLS block with R=256, B=128, overlap=128.
 //
-//   • fft_in_ = [prev_B(64) | curr_B(64)] = 128 samples.
+//   • fft_in_ = [prev_B(128) | curr_B(128)] = 256 samples.
 //   • Circular convolution of a 2B window against a B-tap filter:
 //       - Aliases affect output[0..B-2] (first B-1 samples) because for
 //         n < L_h-1, wrap-around reaches future samples.
-//       - But L_h ≤ B = 64 per partition, so aliases affect output[0..62].
-//   • Discard first B=64 samples (more than enough to cover the aliased zone).
-//   • Keep output[B..2B-1] = 64 clean linear-convolution samples.
-//   • These 64 samples correspond to the input block that was B samples ago —
+//       - But L_h ≤ B = 128 per partition, so aliases affect output[0..126].
+//   • Discard first B=128 samples (more than enough to cover the aliased zone).
+//   • Keep output[B..2B-1] = 128 clean linear-convolution samples.
+//   • These 128 samples correspond to the input block that was B samples ago —
 //     exactly the causal delay the head FIR has already compensated for.
 // ---------------------------------------------------------------------------
 

@@ -12,12 +12,12 @@ using PFFFT_Setup = struct PFFFT_Setup;
 /// PConvZeroLatency — Gardner Hybrid Zero-Latency Convolution Engine
 ///
 /// Architecture (Standard OLS Hybrid, zero-latency):
-///   • Stage 0 (Head) — Direct-form FIR on h[0..K-1], K=64 taps. 0 delay.
+///   • Stage 0 (Head) — Direct-form FIR on h[0..K-1], K=128 taps. 0 delay.
 ///   • Stage 1 (Tail) — Uniform Overlap-Save on h[K..L-1]:
-///                      Block size B = K = 64, FFT size R = 2B = 128.
+///                      Block size B = K = 128, FFT size R = 2B = 256.
 ///
 /// OLS correctness invariant:
-///   For R=128, B=64, overlap=B=64:  first B output samples are circularly
+///   For R=256, B=128, overlap=B=128:  first B output samples are circularly
 ///   aliased and discarded; the last B samples are alias-free linear conv.
 ///   The tail's one-block delay (B samples) is the exact causal offset needed
 ///   for y_tail[n] = conv(x[n-B], h_tail), so summing head + tail is
@@ -61,12 +61,14 @@ public:
 
 private:
     // --- Head / Tail sizing ---
-    // B = K = 64: block size equals head length so OLS discard == head length.
-    // R = 2B = 128: smallest valid PFFFT size; first B samples discarded, last B clean.
-    static constexpr uint32_t kHeadLen   = 64u;   // K  — head FIR tap count
-    static constexpr uint32_t kHeadMask  = 63u;   // power-of-two wrap mask
-    static constexpr uint32_t kTailBlock = 64u;   // B  — OLS new-input block size
-    static constexpr uint32_t kTailFFTSz = 128u;  // R  = 2*B
+    // B = K = 128: block size equals head length so OLS discard == head length.
+    // R = 2B = 256: PFFFT-valid size; first B samples discarded, last B clean.
+    // Widening from 64→128 taps halves tail partition count for 4096-tap HRIRs
+    // (63 → 31 partitions), cutting tail FFT call overhead by ~50 %.
+    static constexpr uint32_t kHeadLen   = 128u;  // K  — head FIR tap count
+    static constexpr uint32_t kHeadMask  = 127u;  // power-of-two wrap mask
+    static constexpr uint32_t kTailBlock = 128u;  // B  — OLS new-input block size
+    static constexpr uint32_t kTailFFTSz = 256u;  // R  = 2*B
 
     // --- Runtime state ---
     bool     instance_usable_{false};

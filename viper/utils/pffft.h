@@ -164,6 +164,19 @@ extern "C" {
   void pffft_zconvolve_accumulate(PFFFT_Setup *setup, const float *dft_a, const float *dft_b, float *dft_ab, float scaling);
 
   /**
+    Fused 4-partition convolution: compute dft_ab = sum_{p=0..3}(dft_a[p] * dft_b[p]) * scaling.
+    Writes directly into dft_ab (does NOT accumulate into existing content).
+    This is equivalent to 4 sequential pffft_zconvolve_accumulate calls on a zero-initialised
+    dft_ab, but processes all 4 source pairs in a single pass over dft_ab, halving
+    L1/L2 write-back pressure for the 4-partition NUPC groups.
+
+    All five pointer arrays must have the "simd-compatible" alignment.
+  */
+  void pffft_zconvolve_4x(PFFFT_Setup *setup,
+                           const float *dft_a[4], const float *dft_b[4],
+                           float *dft_ab, float scaling);
+
+  /**
     the float buffers must have the correct alignment (16-byte boundary
     on intel and powerpc). This function may be used to obtain such
     correctly aligned buffers.
