@@ -97,7 +97,16 @@ public:
         return convolver_.GetKernelID();
     }
 
-    void SetSamplingRate(const uint32_t rate) { sampling_rate_ = rate; }
+    // Updating the sample rate requires rebuilding all IIR/filter coefficients.
+    // RequestEffectsReset() schedules a full ResetAllEffects() on the next
+    // Process() call (audio-thread-safe via atomic flag) so we never rebuild
+    // coefficients mid-buffer from the IPC thread.
+    void SetSamplingRate(const uint32_t rate) {
+        if (sampling_rate_ != rate) {
+            sampling_rate_ = rate;
+            RequestEffectsReset();
+        }
+    }
 
 private:
     std::atomic<bool> pending_effects_reset_{false};
