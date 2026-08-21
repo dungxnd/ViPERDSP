@@ -29,10 +29,17 @@ private:
     float  original_bass_level_{1.0f};
     double envelope_{1e-10};
 
+    // Sample-rate-scaled envelope follower coefficients.
+    // att: 2.5 ms attack,  rel: 250 ms release.
+    // Recomputed in RefreshTimeConstants() on every SR change.
+    double att_coeff_{0.01};   // fallback matches original 44.1 kHz value
+    double rel_coeff_{0.0001}; // fallback matches original 44.1 kHz value
+
     std::array<MultiBiquad, 2> lowpass_;
     std::array<MultiBiquad, 2> highpass_;
     std::array<Harmonic,    2> harmonics_;
 
     void RefreshFilters() noexcept;
     void ApplyHarmonicCoeffs() noexcept;
+    void RefreshTimeConstants() noexcept;
 };

@@ -84,9 +84,10 @@ float LUFSTargeting::MeasureLUFS() const noexcept {
 
 void LUFSTargeting::Process(std::span<float> samples) noexcept {
     if (!enable_ || samples.empty()) return;
-    [[assume(samples.size() % 2 == 0)]];
+    const size_t size = samples.size();
+    [[assume(size % 2 == 0)]];
 
-    const size_t frame_count = samples.size() / 2u;
+    const size_t frame_count = size / 2u;
 
     // ----------------------------------------------------------------
     // 1. Stereo K-weighting + energy accumulation

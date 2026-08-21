@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numbers>
 #include <span>
 
 namespace {
@@ -52,8 +53,8 @@ void PsychoacousticBass::Process(float* const samples, const uint32_t size) noex
         const double bass_r = lowpass_[1].ProcessSample(samples[i + 1]);
 
         const double peak = std::max(std::abs(bass_l), std::abs(bass_r));
-        envelope_ += (peak > envelope_) ? 0.01  * (peak - envelope_)
-                                        : 0.0001 * (peak - envelope_);
+        envelope_ += (peak > envelope_) ? att_coeff_ * (peak - envelope_)
+                                        : rel_coeff_ * (peak - envelope_);
         envelope_ = std::max(envelope_, 1e-10);
 
         const double norm_l = std::clamp(bass_l / envelope_, -1.0, 1.0);
@@ -83,6 +84,7 @@ void PsychoacousticBass::Reset() noexcept {
         lowpass_[ch].Reset();
         highpass_[ch].Reset();
     }
+    RefreshTimeConstants();
     RefreshFilters();
     ApplyHarmonicCoeffs();
 }
@@ -97,7 +99,7 @@ void PsychoacousticBass::SetEnable(const bool enable) noexcept {
 void PsychoacousticBass::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate_ == sampling_rate) return;
     sampling_rate_ = sampling_rate;
-    Reset();
+    Reset(); // calls RefreshTimeConstants() + RefreshFilters()
 }
 
 void PsychoacousticBass::SetCutoff(const uint32_t value) noexcept {
@@ -132,6 +134,15 @@ void PsychoacousticBass::RefreshFilters() noexcept {
             MultiBiquad::HIGH_PASS, 0.0f, freq, sampling_rate_, kFilterQ, false
         );
     }
+}
+
+// Compute sample-rate-dependent envelope follower time constants.
+// attack  τ = 2.5 ms,  release τ = 250 ms.
+// α = 1 − e^(−1 / (τ · fs))
+void PsychoacousticBass::RefreshTimeConstants() noexcept {
+    const double fs = static_cast<double>(sampling_rate_);
+    att_coeff_ = 1.0 - std::exp(-1.0 / (0.0025 * fs));
+    rel_coeff_ = 1.0 - std::exp(-1.0 / (0.2500 * fs));
 }
 
 void PsychoacousticBass::ApplyHarmonicCoeffs() noexcept {
