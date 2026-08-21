@@ -3,12 +3,15 @@
 #include <cmath>
 #include <mdspan>
 #include <numbers>
+#include <ranges>
 #include <utility>
 
 ViPERBassMono::ViPERBassMono() {
     // scratch_buffer_ must be valid before any Process() call, including at the
     // default 44100 Hz rate where SetSamplingRate() is never invoked.
-    scratch_buffer_.resize(4096u * 2u, 0.0f);
+    // PureBassPlus needs 3*frames floats (2*frames FIR + 1*frames delayed bass).
+    // Size to 4096*4 for headroom consistency with ViPERBass and future safety.
+    scratch_buffer_.resize(4096u * 4u, 0.0f);
     biquad_.Reset();
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
     subwoofer_.SetBassGain(sampling_rate_, 0.0f);
@@ -40,40 +43,60 @@ void ViPERBassMono::ProcessNaturalBass(StereoView audio) noexcept {
     }
 }
 
+// PureBass+ mono design:
+//
+//   mid(x[n]) ─► [ Biquad LPF ] ─► b[n] ─► [ ring delay D=31 ] ─► b_del[n] ─┐
+//   x[n]      ─► [ copy to scratch ]                                          │
+//               [ Polyphase FIR (D=31 output lag) ] ─► fir[n]                │
+//                                                                             ▼
+//                                                              [ ShapeMix ] ─► out[n]
 void ViPERBassMono::ProcessPureBassPlus(std::span<float> samples, StereoView audio) noexcept {
-    const uint32_t size = static_cast<uint32_t>(audio.extent(0));
+    const size_t frames = audio.extent(0);
 
-    if (!wave_buffer_.PushSamples(samples)) return;
+    // scratch_buffer_ layout:
+    //   [0 .. 2f-1]  : FIR input (interleaved stereo copy of raw input)
+    //   [2f .. 3f-1] : delayed mono bass per frame
+    float* const fir_buf  = scratch_buffer_.data();
+    float* const bass_buf = scratch_buffer_.data() + frames * 2u;
 
-    float* const buffer         = wave_buffer_.GetBuffer();
-    const uint32_t write_offset = (wave_buffer_.GetBufferOffset() - size) * 2u;
-
-    // Only channel-0 carries the mono-mixed biquad signal; channel-1 is unused.
-    StereoView delay_write(buffer + write_offset, size, 2u);
-    for (size_t f = 0; f < size; ++f) {
+    for (size_t f = 0; f < frames; ++f) {
+        // Mono-mix and biquad low-pass.
         const double sample = (static_cast<double>(audio[f, 0])
                                + static_cast<double>(audio[f, 1])) * 0.5;
-        delay_write[f, 0] = static_cast<float>(biquad_.ProcessSample(sample));
+        const float b = static_cast<float>(biquad_.ProcessSample(sample));
+
+        // Push into mono ring delay.
+        bass_delay_[delay_write_idx_] = b;
+        const size_t read_idx = (delay_write_idx_ - Polyphase::kLatency) & kDelayMask;
+        delay_write_idx_ = (delay_write_idx_ + 1u) & kDelayMask;
+
+        bass_buf[f] = bass_delay_[read_idx];
+
+        // Copy raw stereo input for FIR.
+        fir_buf[f * 2u]      = audio[f, 0];
+        fir_buf[f * 2u + 1u] = audio[f, 1];
     }
 
-    // Polyphase accumulates 1008 frames before producing output; PopSamples is
-    // called unconditionally so the delay line stays aligned regardless.
-    const bool polyphase_ready = (polyphase_.Process(samples) == size);
+    // FIR over stereo copy — introduces kLatency=31 group delay.
+    polyphase_.Process(fir_buf, static_cast<uint32_t>(frames));
 
-    if (polyphase_ready) {
-        StereoView delay_read(buffer, size, 2u);
-        for (size_t f = 0; f < size; ++f) {
-            bass_factor_smoothed_ +=
-                (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
-            float bass = delay_read[f, 0] * bass_factor_smoothed_;
-            if (anti_pop_ < 1.0f) {
-                bass      *= anti_pop_;
-                anti_pop_  = std::min(anti_pop_ + anti_pop_step_, 1.0f);
-            }
-            ShapeMix(bass, audio[f, 0], audio[f, 1]);
+    for (size_t f = 0; f < frames; ++f) {
+        bass_factor_smoothed_ +=
+            (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
+
+        float bass = bass_buf[f] * bass_factor_smoothed_;
+        if (anti_pop_ < 1.0f) {
+            bass      *= anti_pop_;
+            anti_pop_  = std::min(anti_pop_ + anti_pop_step_, 1.0f);
         }
+
+        float fir_l = fir_buf[f * 2u];
+        float fir_r = fir_buf[f * 2u + 1u];
+        ShapeMix(bass, fir_l, fir_r);
+
+        audio[f, 0] = fir_l;
+        audio[f, 1] = fir_r;
     }
-    wave_buffer_.PopSamples(size, true);
 }
 
 void ViPERBassMono::ProcessSubwoofer(std::span<float> samples, StereoView audio) noexcept {
@@ -114,11 +137,12 @@ void ViPERBassMono::Process(std::span<float> samples) noexcept {
 void ViPERBassMono::Reset() noexcept {
     polyphase_.SetSamplingRate(sampling_rate_);
     polyphase_.Reset();
-    wave_buffer_.Reset();
-    wave_buffer_.PushZeros(polyphase_.GetLatency());
     subwoofer_.Reset(); // clear biquad delay-state before reconfiguring coefficients
     subwoofer_.SetBassGain(sampling_rate_, bass_factor_ * 2.5f);
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
+
+    std::ranges::fill(bass_delay_, 0.0f);
+    delay_write_idx_ = 0u;
 
     const auto sr_f       = static_cast<float>(sampling_rate_);
     anti_pop_step_        = 1.0f / (0.020f * sr_f);
@@ -168,7 +192,7 @@ void ViPERBassMono::SetAntiPop(const bool enable) noexcept {
 void ViPERBassMono::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate_ != sampling_rate) {
         sampling_rate_ = sampling_rate;
-        scratch_buffer_.resize(4096u * 2u);
+        scratch_buffer_.resize(4096u * 4u);
         Reset();
     }
 }

@@ -4,7 +4,6 @@
 #include "../utils/Biquad.h"
 #include "../utils/Polyphase.h"
 #include "../utils/Subwoofer.h"
-#include "../utils/WaveBuffer.h"
 #include <cstdint>
 #include <mdspan>
 #include <span>
@@ -51,10 +50,17 @@ private:
     Polyphase  polyphase_{2};
     Biquad     biquad_;
     Subwoofer  subwoofer_;
-    // channels=2: PushSamples copies all interleaved frames correctly.
-    WaveBuffer wave_buffer_{2, 4096};
 
-    // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend.
+    // Allocation-free circular delay line for PureBass+ biquad alignment.
+    // Mono: single channel.  Power-of-two >= Polyphase::kLatency (31).
+    static constexpr size_t kDelayCapacity = 64u;
+    static constexpr size_t kDelayMask     = kDelayCapacity - 1u;
+
+    std::array<float, kDelayCapacity> bass_delay_{};
+    size_t delay_write_idx_{0u};
+
+    // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend and
+    // ProcessPureBassPlus FIR pass.  Sized in ctor / SetSamplingRate().
     std::vector<float> scratch_buffer_;
 
     void ShapeMix(float bass, float& left, float& right) noexcept;

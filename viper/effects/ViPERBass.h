@@ -4,7 +4,6 @@
 #include "../utils/Biquad.h"
 #include "../utils/Polyphase.h"
 #include "../utils/Subwoofer.h"
-#include "../utils/WaveBuffer.h"
 #include <array>
 #include <cstdint>
 #include <mdspan>
@@ -15,7 +14,7 @@ class ViPERBass {
 public:
     using ProcessMode = BassProcessMode;
     // 2-D view over interleaved stereo audio: [frame, channel].
-    using StereoView = std::mdspan<float, std::dextents<size_t, 2>, std::layout_right>;
+    using StereoView  = std::mdspan<float, std::dextents<size_t, 2>, std::layout_right>;
 
     ViPERBass();
 
@@ -31,8 +30,7 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    bool enable_{false};
-
+    bool        enable_{false};
     ProcessMode process_mode_{ProcessMode::NaturalBass};
 
     uint32_t sampling_rate_{44100u};
@@ -52,14 +50,20 @@ private:
     Polyphase             polyphase_{2};
     std::array<Biquad, 2> biquad_{};
     Subwoofer             subwoofer_;
-    WaveBuffer            wave_buffer_{2, 4096};
 
-    // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend.
-    // Sized in ctor / SetSamplingRate() to avoid RT-thread allocation.
-    std::vector<float>    scratch_buffer_;
+    // Allocation-free circular delay line for PureBass+ biquad alignment.
+    // Must be a power-of-two >= Polyphase::kLatency (31) — 64 satisfies this.
+    static constexpr size_t kDelayCapacity = 64u;
+    static constexpr size_t kDelayMask     = kDelayCapacity - 1u;
 
-    void ShapeMix(float& left, float& right,
-                  float bass_l, float bass_r) noexcept;
+    std::array<std::array<float, kDelayCapacity>, 2> bass_delay_{};
+    size_t delay_write_idx_{0u};
+
+    // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend and
+    // ProcessPureBassPlus mid/high FIR pass.  Sized in ctor / SetSamplingRate().
+    std::vector<float> scratch_buffer_;
+
+    void ShapeMix(float& left, float& right, float bass_l, float bass_r) noexcept;
     void ApplyAntiPop(float& bass_l, float& bass_r) noexcept;
     void ProcessNaturalBass (StereoView audio) noexcept;
     void ProcessPureBassPlus(std::span<float> samples, StereoView audio) noexcept;
