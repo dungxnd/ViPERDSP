@@ -43,7 +43,6 @@ constexpr std::array<SpeedParams, 3> kSpeedTable = {{
 
 LUFSTargeting::LUFSTargeting() {
     ConfigureFilters();
-    UpdateSmoothingCoeffs();
     window_size_ = static_cast<uint32_t>(sampling_rate_ * 0.4f);
     step_size_   = window_size_ / 4u;
 }
