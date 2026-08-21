@@ -190,9 +190,11 @@ private:
 #if VIPER_USE_FP16_TAIL
     // On-the-fly FP16→FP32 widening + complex multiply-accumulate.
     // Processes the PFFFT "unordered" spectrum layout (Ncvec pairs of v4sf).
-    static void ZconvolveAccumulateFP16(const float* RESTRICT fdl,
-                                        const __fp16* RESTRICT filter_fp16,
-                                        float* RESTRICT accum,
+    // __restrict__ is the portable C++ spelling of the restrict hint
+    // (RESTRICT is only defined inside pffft.c's translation unit).
+    static void ZconvolveAccumulateFP16(const float* __restrict__ fdl,
+                                        const __fp16* __restrict__ filter_fp16,
+                                        float* __restrict__ accum,
                                         int ncvec) noexcept;
 #endif
 };

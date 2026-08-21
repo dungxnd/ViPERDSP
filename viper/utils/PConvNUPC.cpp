@@ -296,8 +296,11 @@ bool PConvNUPC::LoadKernel(const std::span<const float> kernel,
             s.filter_spectra_fp16.resize(num_parts, nullptr);
             for (uint32_t p = 0; p < num_parts; ++p) {
                 // Allocate 64-byte-aligned FP16 buffer (half the FP32 size).
+                // Use pffft_aligned_malloc: it guarantees 64-byte alignment on all
+                // platforms and is already linked — ::aligned_alloc is unavailable
+                // on Android NDK's bionic libc.
                 __fp16* buf = static_cast<__fp16*>(
-                    ::aligned_alloc(64u, fft_size * sizeof(__fp16)));
+                    pffft_aligned_malloc(fft_size * sizeof(__fp16)));
                 if (!buf) {
                     // FP16 allocation failure: fall back to FP32 silently.
                     s.filter_spectra_fp16.clear();
@@ -702,10 +705,10 @@ void PConvNUPC::ExecuteStageSlice(Stage& stage, const uint32_t samples_advanced)
 // ---------------------------------------------------------------------------
 
 #if VIPER_USE_FP16_TAIL
-void PConvNUPC::ZconvolveAccumulateFP16(const float* RESTRICT fdl,
-                                         const __fp16* RESTRICT filter_fp16,
-                                         float* RESTRICT accum,
-                                         const int       ncvec) noexcept {
+void PConvNUPC::ZconvolveAccumulateFP16(const float* __restrict__ fdl,
+                                         const __fp16* __restrict__ filter_fp16,
+                                         float* __restrict__ accum,
+                                         const int            ncvec) noexcept {
     // Iterate over Ncvec v4sf-pair bins (each pair = real + imag vectors of 4).
     // Process 2 pairs per iteration (matches the stride in pffft_zconvolve_accumulate).
     const float32x4_t* va  = reinterpret_cast<const float32x4_t*>(fdl);
