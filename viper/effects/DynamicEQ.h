@@ -67,8 +67,13 @@ private:
     struct BandState {
         float env_l{0.0f};
         float env_r{0.0f};
+        // Per-sample coefficients — used by audio-rate envelope follower
         float attack_coeff{0.1f};
         float release_coeff{0.01f};
+        // Sub-block coefficients — used by kControlPeriod-rate gain smoother
+        // α_sub = 1 - exp(-K/τ·fs) = 1 - (1 - α_sample)^K
+        float subblock_attack_coeff{0.1f};
+        float subblock_release_coeff{0.01f};
         float current_gain_db{0.0f};
     };
 

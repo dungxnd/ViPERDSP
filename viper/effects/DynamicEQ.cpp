@@ -21,9 +21,10 @@ void DynamicEQ::Process(std::span<float> samples) noexcept {
     StereoView audio(samples.data(), frame_count, 2u);
 
     for (uint32_t b = 0u; b < band_count_; ++b) {
-        auto&       p  = params_[b];
-        auto&       st = state_[b];
-        const auto& fc = coeffs_[b];
+        auto& p  = params_[b];
+        auto& st = state_[b];
+        // NOTE: fc is scoped inside the sub-block loop (after FastUpdateBandCoeffs)
+        // so the compiler reads fresh coefficients and never caches stale values.
 
         for (size_t f = 0u; f < frame_count; f += kControlPeriod) {
             const size_t chunk = std::min(static_cast<size_t>(kControlPeriod),
@@ -45,8 +46,9 @@ void DynamicEQ::Process(std::span<float> samples) noexcept {
             }
 
             // ----------------------------------------------------------------
-            // 2. Sub-block control (once per 16 samples):
+            // 2. Sub-block control (once per kControlPeriod samples):
             //    Power-domain threshold gate skips FastLog2 when signal silent.
+            //    Gain smoother uses subblock_*_coeff (scaled to K-sample dt).
             // ----------------------------------------------------------------
             const float max_env_sq = std::max(st.env_l, st.env_r);
             float desired_gain_db  = 0.0f;
@@ -58,17 +60,20 @@ void DynamicEQ::Process(std::span<float> samples) noexcept {
                 desired_gain_db       = p.target_gain_db * ratio;
             }
 
+            // Sub-block coefficient: α = 1 - exp(-K/τ·fs), not the per-sample α
             const float g_coeff = (std::abs(desired_gain_db) > std::abs(st.current_gain_db))
-                                      ? st.attack_coeff : st.release_coeff;
+                                      ? st.subblock_attack_coeff : st.subblock_release_coeff;
             st.current_gain_db += g_coeff * (desired_gain_db - st.current_gain_db);
 
-            // Biquad coefficients recomputed at sub-block rate, NOT per sample.
-            // No sin/cos here — trig_cache_ was computed on the last parameter change.
+            // Biquad coefficients recomputed at sub-block rate.
+            // No sin/cos — trig_cache_ was populated on the last parameter change.
             FastUpdateBandCoeffs(b, st.current_gain_db);
 
             // ----------------------------------------------------------------
-            // 3. TDF-II biquad over the sub-block (vectorizable inner loop)
+            // 3. TDF-II biquad over the sub-block (vectorizable inner loop).
+            //    fc is acquired HERE — after FastUpdateBandCoeffs writes coeffs_[b].
             // ----------------------------------------------------------------
+            const auto& fc = coeffs_[b];
 #pragma clang loop vectorize(enable)
             for (size_t i = 0u; i < chunk; ++i) {
                 for (size_t ch = 0u; ch < 2u; ++ch) {
@@ -257,8 +262,17 @@ void DynamicEQ::RecalcAttackRelease(const uint32_t band) noexcept {
     const auto att_sec = params_[band].attack_ms  / 1000.0f;
     const auto rel_sec = params_[band].release_ms / 1000.0f;
 
-    state_[band].attack_coeff  = att_sec > 0.0f
-                                     ? 1.0f - std::exp(-1.0f / (att_sec * sr)) : 1.0f;
-    state_[band].release_coeff = rel_sec > 0.0f
-                                     ? 1.0f - std::exp(-1.0f / (rel_sec * sr)) : 1.0f;
+    // Per-sample alpha — for audio-rate envelope follower (dt = 1/sr)
+    const float att1 = att_sec > 0.0f ? 1.0f - std::exp(-1.0f / (att_sec * sr)) : 1.0f;
+    const float rel1 = rel_sec > 0.0f ? 1.0f - std::exp(-1.0f / (rel_sec * sr)) : 1.0f;
+    state_[band].attack_coeff  = att1;
+    state_[band].release_coeff = rel1;
+
+    // Sub-block alpha — for kControlPeriod-rate gain smoother (dt = K/sr)
+    // Equivalent to: 1 - (1 - α_sample)^K
+    const float K = static_cast<float>(kControlPeriod);
+    state_[band].subblock_attack_coeff  = att_sec > 0.0f
+        ? 1.0f - std::exp(-K / (att_sec * sr)) : 1.0f;
+    state_[band].subblock_release_coeff = rel_sec > 0.0f
+        ? 1.0f - std::exp(-K / (rel_sec * sr)) : 1.0f;
 }

@@ -67,8 +67,6 @@ private:
     float current_gain_db_{0.0f};
     float current_gain_linear_{1.0f};
     float window_accumulator_{0.0f};
-    float attack_coeff_{0.0f};
-    float release_coeff_{0.0f};
     float cached_lufs_{-70.0f};
     float running_power_sum_{0.0f}; // O(1) sliding window sum — no iteration in MeasureLUFS
 
@@ -78,7 +76,6 @@ private:
     StereoTDF2Biquad stage2_{};
 
     void ConfigureFilters() noexcept;
-    void UpdateSmoothingCoeffs() noexcept;
     void UpdateWindow() noexcept;
     [[nodiscard]] float MeasureLUFS() const noexcept;
 };

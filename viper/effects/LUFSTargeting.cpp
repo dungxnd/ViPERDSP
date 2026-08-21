@@ -101,8 +101,9 @@ void LUFSTargeting::Process(std::span<float> samples) noexcept {
     }
 
     // ----------------------------------------------------------------
-    // 2. Block-rate gain computation (once per Process() call)
-    //    FastDbToLinear: 3-cycle bit-manipulation exp2 approximation
+    // 2. Block-rate gain computation (once per Process() call).
+    //    Time constant scaled to block duration dt = frame_count/sr so
+    //    alpha_block = 1 - exp(-dt/tau) — exact regardless of block size.
     // ----------------------------------------------------------------
     const float desired_gain_db = std::clamp(
         target_lufs_ - cached_lufs_,
@@ -110,9 +111,12 @@ void LUFSTargeting::Process(std::span<float> samples) noexcept {
         max_gain_db_
     );
 
-    const float coeff = (desired_gain_db > current_gain_db_)
-                            ? attack_coeff_ : release_coeff_;
-    current_gain_db_ += coeff * (desired_gain_db - current_gain_db_);
+    const auto [attack_ms, release_ms] = kSpeedTable[static_cast<size_t>(speed_)];
+    const float tau_sec  = (desired_gain_db > current_gain_db_ ? attack_ms : release_ms) * 0.001f;
+    const float block_dt = static_cast<float>(frame_count) / static_cast<float>(sampling_rate_);
+    const float block_coeff = 1.0f - std::exp(-block_dt / tau_sec);
+
+    current_gain_db_ += block_coeff * (desired_gain_db - current_gain_db_);
 
     const float target_gain_linear = viper::dsp::FastDbToLinear(current_gain_db_);
 
@@ -137,7 +141,6 @@ void LUFSTargeting::Reset() noexcept {
     stage1_.Reset();
     stage2_.Reset();
     ConfigureFilters();
-    UpdateSmoothingCoeffs();
     current_gain_db_     = 0.0f;
     current_gain_linear_ = 1.0f;
     sample_counter_      = 0u;
@@ -164,7 +167,7 @@ void LUFSTargeting::SetMaxGain(const float value)    noexcept { max_gain_db_ = v
 
 void LUFSTargeting::SetSpeed(const int value) noexcept {
     speed_ = std::clamp(value, 0, 2);
-    UpdateSmoothingCoeffs();
+    // kSpeedTable is read directly in Process() at block rate — no coefficients to precompute
 }
 
 void LUFSTargeting::SetSamplingRate(const uint32_t sampling_rate) {
@@ -184,9 +187,3 @@ void LUFSTargeting::ConfigureFilters() noexcept {
     stage2_.a1 = kw.stage2.a1; stage2_.a2 = kw.stage2.a2;
 }
 
-void LUFSTargeting::UpdateSmoothingCoeffs() noexcept {
-    const auto [attack_ms, release_ms] = kSpeedTable[static_cast<size_t>(speed_)];
-    const auto sr = static_cast<float>(sampling_rate_);
-    attack_coeff_  = 1.0f - std::exp(-1.0f / (sr * attack_ms  / 1000.0f));
-    release_coeff_ = 1.0f - std::exp(-1.0f / (sr * release_ms / 1000.0f));
-}
