@@ -51,7 +51,8 @@ private:
     std::array<Biquad, 2> biquad_{};
     Subwoofer             subwoofer_;
 
-    // Allocation-free circular delay line for PureBass+ biquad alignment.
+    // Allocation-free circular delay line for PureBass+ dry-path delay.
+    // Stores the raw input and delays it by kLatency (31) samples.
     // Must be a power-of-two >= Polyphase::kLatency (31) — 64 satisfies this.
     static constexpr size_t kDelayCapacity = 64u;
     static constexpr size_t kDelayMask     = kDelayCapacity - 1u;
@@ -66,6 +67,6 @@ private:
     void ShapeMix(float& left, float& right, float bass_l, float bass_r) noexcept;
     void ApplyAntiPop(float& bass_l, float& bass_r) noexcept;
     void ProcessNaturalBass (StereoView audio) noexcept;
-    void ProcessPureBassPlus(std::span<float> samples, StereoView audio) noexcept;
+    void ProcessPureBassPlus(StereoView audio) noexcept;
     void ProcessSubwoofer   (std::span<float> samples, StereoView audio) noexcept;
 };

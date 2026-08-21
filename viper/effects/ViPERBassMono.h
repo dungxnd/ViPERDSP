@@ -51,12 +51,14 @@ private:
     Biquad     biquad_;
     Subwoofer  subwoofer_;
 
-    // Allocation-free circular delay line for PureBass+ biquad alignment.
-    // Mono: single channel.  Power-of-two >= Polyphase::kLatency (31).
+    // Allocation-free circular delay line for PureBass+ dry-path delay.
+    // Stores interleaved stereo (L,R) raw input, delayed by kLatency (31) samples.
+    // Capacity is kDelayCapacity frames * 2 channels.
+    // Power-of-two frame capacity >= Polyphase::kLatency (31).
     static constexpr size_t kDelayCapacity = 64u;
     static constexpr size_t kDelayMask     = kDelayCapacity - 1u;
 
-    std::array<float, kDelayCapacity> bass_delay_{};
+    std::array<float, kDelayCapacity * 2u> bass_delay_{};
     size_t delay_write_idx_{0u};
 
     // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend and
@@ -65,6 +67,6 @@ private:
 
     void ShapeMix(float bass, float& left, float& right) noexcept;
     void ProcessNaturalBass (StereoView audio) noexcept;
-    void ProcessPureBassPlus(std::span<float> samples, StereoView audio) noexcept;
+    void ProcessPureBassPlus(StereoView audio) noexcept;
     void ProcessSubwoofer   (std::span<float> samples, StereoView audio) noexcept;
 };

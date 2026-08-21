@@ -6,10 +6,12 @@
 
 class Polyphase {
 public:
-    static constexpr uint32_t kNumTaps  = 63u;
-    static constexpr uint32_t kLatency  = 31u; // Group delay = (kNumTaps - 1) / 2
+    static constexpr uint32_t kNumTaps = 63u;
+    static constexpr uint32_t kLatency = 31u; // Group delay = (kNumTaps - 1) / 2
 
-    explicit Polyphase(int coeff_type) noexcept;
+    // coeff_type param is accepted for API compatibility but ignored —
+    // coefficients are now designed at runtime via DesignLinearPhaseFilter().
+    explicit Polyphase(int coeff_type = 2) noexcept;
 
     // Process interleaved stereo in-place.  size = frame count (not sample count).
     // Operates sample-accurately at any block size; no internal accumulation.
@@ -21,17 +23,35 @@ public:
     void Reset() noexcept;
 
     [[nodiscard]] static constexpr uint32_t GetLatency() noexcept { return kLatency; }
-    void SetSamplingRate(uint32_t sampling_rate) noexcept { sampling_rate_ = sampling_rate; }
+
+    // Redesigns coefficients and resets history if the rate actually changed.
+    void SetSamplingRate(uint32_t sampling_rate) noexcept;
+
+    // Redesigns coefficients for a new cutoff (does not reset history).
+    void SetCutoffFrequency(float cutoff_hz) noexcept;
 
 private:
     uint32_t sampling_rate_{44100u};
-    const std::array<float, kNumTaps>* coeffs_{nullptr};
+    float    cutoff_hz_{100.0f};
 
-    // Per-channel circular delay-line.  Power-of-two size (64) enables cheap
-    // index masking.  kNumTaps (63) always fits within 64 slots.
-    static constexpr uint32_t kHistorySize = 64u;
-    static constexpr uint32_t kHistoryMask = kHistorySize - 1u;
+    // Coefficients aligned for 256-bit SIMD loads.
+    alignas(32) std::array<float, kNumTaps> coeffs_{};
 
-    std::array<std::array<float, kHistorySize>, 2> history_{};
+    // Capacity must be power of two (64) so that (idx - 1) & kHistIdxMask wraps
+    // correctly across 0..kHistCap-1 without ever skipping an index.
+    // (62 = 0x3E is NOT a valid mask: it zeroes bit-0, skipping all odd indices.)
+    //
+    // kHistIdxMask limits history_idx_ to [0, 63].  Any read slice
+    //   history_[ch][history_idx_ .. history_idx_ + kNumTaps - 1]
+    // is contiguous (max index = 63 + 62 = 125 < kHistBufSize=128),
+    // enabling auto-vectorisation without a masked index inside the inner loop.
+    static constexpr uint32_t kHistCap     = 64u;             // power-of-two head range
+    static constexpr uint32_t kHistIdxMask = kHistCap - 1u;  // 63 = 0b00111111
+    static constexpr uint32_t kHistBufSize = 128u;            // must be >= kHistCap + kNumTaps - 1
+
+    // Double-buffered (128 floats per channel) for contiguous SIMD pointer reads.
+    alignas(32) std::array<std::array<float, kHistBufSize>, 2> history_{};
     uint32_t history_idx_{0u};
+
+    void DesignLinearPhaseFilter() noexcept;
 };

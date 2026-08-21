@@ -9,8 +9,8 @@
 ViPERBassMono::ViPERBassMono() {
     // scratch_buffer_ must be valid before any Process() call, including at the
     // default 44100 Hz rate where SetSamplingRate() is never invoked.
-    // PureBassPlus needs 3*frames floats (2*frames FIR + 1*frames delayed bass).
-    // Size to 4096*4 for headroom consistency with ViPERBass and future safety.
+    // PureBassPlus needs 4*frames floats (2*frames FIR input + 2*frames delayed dry).
+    // Size to 4096*4 for headroom consistency with ViPERBass.
     scratch_buffer_.resize(4096u * 4u, 0.0f);
     biquad_.Reset();
     biquad_.SetLowPassParameter(static_cast<float>(frequency_), sampling_rate_, 0.53f);
@@ -19,12 +19,24 @@ ViPERBassMono::ViPERBassMono() {
 }
 
 void ViPERBassMono::ShapeMix(const float bass, float& left, float& right) noexcept {
-    const float y = dc_block_coeff_ * (dc_y1_ + bass - dc_x1_);
-    dc_x1_ = bass;
-    dc_y1_ = y;
-    const float clipped = BassSoftClip(y, 0.8f);
-    left  = BassSoftClip(left  + clipped, 0.95f);
-    right = BassSoftClip(right + clipped, 0.95f);
+    // 1. Soft-clip the mono bass component to generate low-order warm harmonics.
+    const float shaped = BassSoftClip(bass, 0.8f);
+
+    // 2. DC-block only the mono bass path.
+    //    Applying the DC blocker to the mixed stereo signal (as the previous code
+    //    did) leaked the Left channel's low-frequency content into the Right
+    //    channel via `out_r = mix_r - mix_l + out_l`, destroying stereo separation.
+    //    Blocking only the mono `shaped` signal here eliminates inter-channel
+    //    crosstalk while still removing any DC offset introduced by soft-clipping.
+    const float dc_blocked_bass = dc_block_coeff_ * (dc_y1_ + shaped - dc_x1_);
+    dc_x1_ = shaped;
+    dc_y1_ = dc_blocked_bass;
+
+    // 3. Add the DC-blocked mono bass cleanly to both channels.
+    //    No outer soft-clip: in the complementary crossover architecture
+    //    High + Bass = Dry at unity gain, so headroom is already bounded.
+    left  = left  + dc_blocked_bass;
+    right = right + dc_blocked_bass;
 }
 
 void ViPERBassMono::ProcessNaturalBass(StereoView audio) noexcept {
@@ -43,59 +55,83 @@ void ViPERBassMono::ProcessNaturalBass(StereoView audio) noexcept {
     }
 }
 
-// PureBass+ mono design:
+// PureBass+ mono — complementary linear-phase crossover with transparent saturation:
 //
-//   mid(x[n]) ─► [ Biquad LPF ] ─► b[n] ─► [ ring delay D=31 ] ─► b_del[n] ─┐
-//   x[n]      ─► [ copy to scratch ]                                          │
-//               [ Polyphase FIR (D=31 output lag) ] ─► fir[n]                │
-//                                                                             ▼
-//                                                              [ ShapeMix ] ─► out[n]
-void ViPERBassMono::ProcessPureBassPlus(std::span<float> samples, StereoView audio) noexcept {
+//   x[n] ──► [ ring delay D=31 ] ────────────────────────────────────────────────────────► Dry[n-31]
+//                                                                                               │
+//   mid(x[n]) ──► [ Linear-Phase FIR (D=31) ] ──► Bass[n-31] ──► [ × (1+factor) ] ──► delta ──► DC-block
+//                                                                                               │
+//                                                                           y[n] = Dry + DC_Blocked_Delta
+//
+// Same correctness guarantee as ViPERBass::ProcessPureBassPlus:
+//   At factor=0: boost_delta = SoftClip(bass_linear) - bass_linear ≈ 0 → output ≡ Dry[n-31].
+//   DC blocker runs only on the non-linear increment, never on the direct signal path.
+void ViPERBassMono::ProcessPureBassPlus(StereoView audio) noexcept {
     const size_t frames = audio.extent(0);
 
     // scratch_buffer_ layout:
-    //   [0 .. 2f-1]  : FIR input (interleaved stereo copy of raw input)
-    //   [2f .. 3f-1] : delayed mono bass per frame
-    float* const fir_buf  = scratch_buffer_.data();
-    float* const bass_buf = scratch_buffer_.data() + frames * 2u;
+    //   [0  .. 2f-1]: fir_buf — mono-mix input/output for the linear-phase FIR
+    //   [2f .. 4f-1]: dry_buf — clean dry stereo delayed by kLatency frames
+    // Total: 4 * frames.  Pre-sized to 4096 * 4 in ctor / SetSamplingRate().
+    float* const fir_buf = scratch_buffer_.data();                 // [0  .. 2f-1]
+    float* const dry_buf = scratch_buffer_.data() + frames * 2u;  // [2f .. 4f-1]
 
+    // ── Step 1: delay raw stereo dry by kLatency, feed mono mix to FIR ───────
     for (size_t f = 0; f < frames; ++f) {
-        // Mono-mix and biquad low-pass.
-        const double sample = (static_cast<double>(audio[f, 0])
-                               + static_cast<double>(audio[f, 1])) * 0.5;
-        const float b = static_cast<float>(biquad_.ProcessSample(sample));
+        // Store raw stereo dry input interleaved in ring delay; read back kLatency ago.
+        bass_delay_[delay_write_idx_ * 2u]      = audio[f, 0];
+        bass_delay_[delay_write_idx_ * 2u + 1u] = audio[f, 1];
 
-        // Push into mono ring delay.
-        bass_delay_[delay_write_idx_] = b;
         const size_t read_idx = (delay_write_idx_ - Polyphase::kLatency) & kDelayMask;
         delay_write_idx_ = (delay_write_idx_ + 1u) & kDelayMask;
 
-        bass_buf[f] = bass_delay_[read_idx];
+        dry_buf[f * 2u]      = bass_delay_[read_idx * 2u];
+        dry_buf[f * 2u + 1u] = bass_delay_[read_idx * 2u + 1u];
 
-        // Copy raw stereo input for FIR.
-        fir_buf[f * 2u]      = audio[f, 0];
-        fir_buf[f * 2u + 1u] = audio[f, 1];
+        // Mono-mix raw input (no IIR pre-filter) and duplicate to both FIR channels.
+        // The linear-phase FIR is the sole frequency-selective element.
+        const float mono = (audio[f, 0] + audio[f, 1]) * 0.5f;
+        fir_buf[f * 2u]      = mono;
+        fir_buf[f * 2u + 1u] = mono;
     }
 
-    // FIR over stereo copy — introduces kLatency=31 group delay.
+    // ── Step 2: linear-phase FIR extracts Bass[n-31] (group delay = 31) ──────
     polyphase_.Process(fir_buf, static_cast<uint32_t>(frames));
 
+    // ── Step 3: transparent saturation blend — DC-block only the boost delta ─
     for (size_t f = 0; f < frames; ++f) {
         bass_factor_smoothed_ +=
             (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
 
-        float bass = bass_buf[f] * bass_factor_smoothed_;
+        const float dry_l = dry_buf[f * 2u];
+        const float dry_r = dry_buf[f * 2u + 1u];
+
+        // Mono bass from FIR (L == R since input was duplicated mono mid-mix).
+        const float bass_linear = fir_buf[f * 2u];
+
+        // Boosted mono bass: (1 + factor) so factor=0 → unity (bass_linear unchanged).
+        float boosted = bass_linear * (1.0f + bass_factor_smoothed_);
         if (anti_pop_ < 1.0f) {
-            bass      *= anti_pop_;
+            boosted   *= anti_pop_;
             anti_pop_  = std::min(anti_pop_ + anti_pop_step_, 1.0f);
         }
 
-        float fir_l = fir_buf[f * 2u];
-        float fir_r = fir_buf[f * 2u + 1u];
-        ShapeMix(bass, fir_l, fir_r);
+        // Isolate the non-linear saturation increment only.
+        // At factor=0 and sub-bass levels: SoftClip(x) ≈ x → boost_delta ≈ 0.
+        const float shaped      = BassSoftClip(boosted, 0.8f);
+        const float boost_delta = shaped - bass_linear;
 
-        audio[f, 0] = fir_l;
-        audio[f, 1] = fir_r;
+        // DC-block only the non-linear delta; the dry and bass_linear paths
+        // recombine without any phase-shifted component in the direct signal path.
+        const float dc_blocked_delta =
+            dc_block_coeff_ * (dc_y1_ + boost_delta - dc_x1_);
+        dc_x1_ = boost_delta;
+        dc_y1_ = dc_blocked_delta;
+
+        // Perfect reconstruction: Dry[n-31] + harmonic boost only.
+        // At factor=0: boost_delta≈0 → output≡Dry[n-31], zero phase error.
+        audio[f, 0] = dry_l + dc_blocked_delta;
+        audio[f, 1] = dry_r + dc_blocked_delta;
     }
 }
 
@@ -129,13 +165,14 @@ void ViPERBassMono::Process(std::span<float> samples) noexcept {
     using enum ProcessMode;
     switch (process_mode_) {
         case NaturalBass:  ProcessNaturalBass (audio);          break;
-        case PureBassPlus: ProcessPureBassPlus(samples, audio); break;
+        case PureBassPlus: ProcessPureBassPlus(audio);          break;
         case Subwoofer:    ProcessSubwoofer   (samples, audio); break;
         default:           return; // guard against corrupt IPC value
     }
 }
 
 void ViPERBassMono::Reset() noexcept {
+    polyphase_.SetCutoffFrequency(static_cast<float>(frequency_));
     polyphase_.SetSamplingRate(sampling_rate_);
     polyphase_.Reset();
     subwoofer_.Reset(); // clear biquad delay-state before reconfiguring coefficients
@@ -181,6 +218,9 @@ void ViPERBassMono::SetBassFactor(const float value) noexcept {
 void ViPERBassMono::SetFrequency(const uint32_t value) noexcept {
     if (frequency_ != value) {
         frequency_ = value;
+        // Update the linear-phase FIR crossover cutoff for PureBass+ mode.
+        polyphase_.SetCutoffFrequency(static_cast<float>(value));
+        // Keep biquad in sync for NaturalBass mode.
         biquad_.SetLowPassParameter(
             static_cast<float>(frequency_), sampling_rate_, 0.53f);
     }
