@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../utils/PConvSingle.h"
+#include "../utils/PConvNUPC.h"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -35,7 +35,6 @@ public:
 private:
     bool     enable_                   = false;
     bool     is_valid_cross_channel_   = false;
-    int      is_quad_channel_          = 0;
     uint32_t sampling_rate_            = 44100;
     uint32_t kernel_id_                = 0;
     uint32_t expected_size_            = 0;
@@ -47,10 +46,8 @@ private:
     std::string        kernel_file_path_;
     std::vector<float> kernel_buffer_;
 
-    PConvSingle kernel_ch1_;
-    PConvSingle kernel_ch2_;
-    PConvSingle kernel_ch3_;
-    PConvSingle kernel_ch4_;
+    PConvNUPC kernel_ch1_;
+    PConvNUPC kernel_ch2_;
 
     void ClearKernelBuffer() noexcept;
 };

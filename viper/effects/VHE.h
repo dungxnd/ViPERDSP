@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../utils/PConvSingle.h"
+#include "../utils/PConvZeroLatency.h"
 #include <cstdint>
 
 class VHE {
@@ -22,6 +22,6 @@ private:
     uint32_t sampling_rate_{44100u};
     uint32_t effect_level_{0u};
 
-    PConvSingle conv_left_;
-    PConvSingle conv_right_;
+    PConvZeroLatency conv_left_;
+    PConvZeroLatency conv_right_;
 };

@@ -8,6 +8,11 @@ set(VIPERDSP_SOURCES
     # FFT
     viper/utils/pffft.c
 
+    # Convolution infrastructure
+    viper/utils/PFFFTRegistry.cpp
+    viper/utils/PConvZeroLatency.cpp
+    viper/utils/PConvNUPC.cpp
+
     # Engine
     viper/ViPER.cpp
 
@@ -60,7 +65,6 @@ set(VIPERDSP_SOURCES
     viper/utils/MultiBiquad.cpp
     viper/utils/NoiseSharpening.cpp
     viper/utils/PassFilter.cpp
-    viper/utils/PConvSingle.cpp
     viper/utils/PolesFilter.cpp
     viper/utils/Polyphase.cpp
     viper/utils/Stereo3DSurround.cpp

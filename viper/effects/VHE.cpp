@@ -80,7 +80,6 @@ uint32_t VHE::Process(const float *source, float *dest, const uint32_t frame_siz
         std::copy_n(source, frame_size * 2u, dest);
     }
 
-    // PConvSingle owns FIFOs; handle arbitrary frame_size directly.
     conv_left_.ProcessInterleaved(dest, dest, 0u, 2u, frame_size);
     conv_right_.ProcessInterleaved(dest, dest, 1u, 2u, frame_size);
 
@@ -88,9 +87,7 @@ uint32_t VHE::Process(const float *source, float *dest, const uint32_t frame_siz
 }
 
 void VHE::Reset() {
-    conv_left_.Reset();
     conv_left_.UnloadKernel();
-    conv_right_.Reset();
     conv_right_.UnloadKernel();
 
     if (effect_level_ >= kVheKernels.size()) {
@@ -108,10 +105,11 @@ void VHE::Reset() {
 
     const auto& k = kVheKernels[effect_level_][static_cast<std::size_t>(rate_idx)];
     // Dequantize once at load time (not on the audio thread).
+    // PConvZeroLatency::LoadKernel applies gain internally.
     auto left  = Dequantize(k.left,  k.size, k.gain);
     auto right = Dequantize(k.right, k.size, k.gain_r);
-    conv_left_.LoadKernel(left.data(),  1.0f, k.size, 4096u);
-    conv_right_.LoadKernel(right.data(), 1.0f, k.size, 4096u);
+    conv_left_.LoadKernel(left.data(),  k.size);
+    conv_right_.LoadKernel(right.data(), k.size);
 }
 
 bool VHE::GetEnable() const noexcept {

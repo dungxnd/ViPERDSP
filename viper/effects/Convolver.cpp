@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <vector>
 
-static constexpr int kConvSegmentSize = 0x1000;
+// kConvSegmentSize removed: PConvNUPC auto-sizes its NUPC hierarchy.
 
 static void ApplyCrossChannel(float* const buf, const uint32_t n, const float cc) noexcept {
     for (uint32_t i = 0; i < n; ++i) {
@@ -32,7 +32,6 @@ uint32_t Convolver::Process(
         std::copy_n(source, frame_size * 2u, dest);
     }
 
-    // PConvSingle now owns decoupling FIFOs; process arbitrary frame_size directly.
     kernel_ch1_.ProcessInterleaved(dest, dest, 0u, 2u, frame_size);
     kernel_ch2_.ProcessInterleaved(dest, dest, 1u, 2u, frame_size);
 
@@ -62,11 +61,7 @@ void Convolver::SetKernel(const char* const path) {
     if (!path || path[0] == '\0') return;
     if (kernel_file_path_ == path) return;
 
-    kernel_ch1_.Reset(); kernel_ch2_.Reset();
-    kernel_ch3_.Reset(); kernel_ch4_.Reset();
     kernel_ch1_.UnloadKernel(); kernel_ch2_.UnloadKernel();
-    kernel_ch3_.UnloadKernel(); kernel_ch4_.UnloadKernel();
-    is_quad_channel_           = 0;
     current_kernel_buffer_crc_ = 0;
 
     WavData wav;
@@ -86,9 +81,9 @@ void Convolver::SetKernel(const char* const path) {
 
     bool success;
     if (wav.channels == 1) {
-        const uint32_t ret1 = kernel_ch1_.LoadKernel(wav.samples.get(), wav.frame_count, kConvSegmentSize);
-        const uint32_t ret2 = kernel_ch2_.LoadKernel(wav.samples.get(), wav.frame_count, kConvSegmentSize);
-        success = ret1 != 0 && ret2 != 0;
+        const bool r1 = kernel_ch1_.LoadKernel(wav.samples.get(), wav.frame_count);
+        const bool r2 = kernel_ch2_.LoadKernel(wav.samples.get(), wav.frame_count);
+        success = r1 && r2;
     } else {
         auto ch1 = std::make_unique<float[]>(wav.frame_count);
         auto ch2 = std::make_unique<float[]>(wav.frame_count);
@@ -96,20 +91,18 @@ void Convolver::SetKernel(const char* const path) {
             ch1[i] = wav.samples[i * 2];
             ch2[i] = wav.samples[i * 2 + 1];
         }
-        const uint32_t ret1 = kernel_ch1_.LoadKernel(ch1.get(), wav.frame_count, kConvSegmentSize);
-        const uint32_t ret2 = kernel_ch2_.LoadKernel(ch2.get(), wav.frame_count, kConvSegmentSize);
-        success = ret1 != 0 && ret2 != 0;
+        const bool r1 = kernel_ch1_.LoadKernel(ch1.get(), wav.frame_count);
+        const bool r2 = kernel_ch2_.LoadKernel(ch2.get(), wav.frame_count);
+        success = r1 && r2;
     }
 
     if (success) {
-        is_quad_channel_           = 1;
         kernel_file_path_          = path;
         kernel_id_                 = 0;
         current_kernel_buffer_crc_ = 0;
         Reset();
     } else {
         kernel_ch1_.UnloadKernel(); kernel_ch2_.UnloadKernel();
-        kernel_ch3_.UnloadKernel(); kernel_ch4_.UnloadKernel();
         kernel_file_path_.clear();
         kernel_id_ = 0;
         Reset();
@@ -118,11 +111,9 @@ void Convolver::SetKernel(const char* const path) {
 
 void Convolver::SetKernel(const float* const buf, const uint32_t size) {
     if (size < 16) return;
-    kernel_ch1_.Reset();
-    kernel_ch2_.Reset();
-    const uint32_t ret1 = kernel_ch1_.LoadKernel(buf, size, kConvSegmentSize);
-    const uint32_t ret2 = kernel_ch2_.LoadKernel(buf, size, kConvSegmentSize);
-    if (ret1 == 0 || ret2 == 0) {
+    const bool r1 = kernel_ch1_.LoadKernel(buf, size);
+    const bool r2 = kernel_ch2_.LoadKernel(buf, size);
+    if (!r1 || !r2) {
         kernel_ch1_.UnloadKernel();
         kernel_ch2_.UnloadKernel();
     }
@@ -143,11 +134,9 @@ void Convolver::SetKernelStereo(
     const float* const ch_l, const float* const ch_r, const uint32_t frame_count
 ) {
     if (frame_count < 16) return;
-    kernel_ch1_.Reset();
-    kernel_ch2_.Reset();
-    const uint32_t ret1 = kernel_ch1_.LoadKernel(ch_l, frame_count, kConvSegmentSize);
-    const uint32_t ret2 = kernel_ch2_.LoadKernel(ch_r, frame_count, kConvSegmentSize);
-    if (ret1 == 0 || ret2 == 0) {
+    const bool r1 = kernel_ch1_.LoadKernel(ch_l, frame_count);
+    const bool r2 = kernel_ch2_.LoadKernel(ch_r, frame_count);
+    if (!r1 || !r2) {
         kernel_ch1_.UnloadKernel();
         kernel_ch2_.UnloadKernel();
     }
@@ -215,9 +204,9 @@ void Convolver::CommitKernelBuffer(
     bool loaded;
 
     if (channel_count_ == 1) {
-        const uint32_t ret1 = kernel_ch1_.LoadKernel(kernel_buffer_.data(), frames_per_channel, kConvSegmentSize);
-        const uint32_t ret2 = kernel_ch2_.LoadKernel(kernel_buffer_.data(), frames_per_channel, kConvSegmentSize);
-        loaded = ret1 != 0 && ret2 != 0;
+        const bool r1 = kernel_ch1_.LoadKernel(kernel_buffer_.data(), frames_per_channel);
+        const bool r2 = kernel_ch2_.LoadKernel(kernel_buffer_.data(), frames_per_channel);
+        loaded = r1 && r2;
     } else {
         auto ch1 = std::make_unique<float[]>(frames_per_channel);
         auto ch2 = std::make_unique<float[]>(frames_per_channel);
@@ -225,9 +214,9 @@ void Convolver::CommitKernelBuffer(
             ch1[i] = kernel_buffer_[i * 2];
             ch2[i] = kernel_buffer_[i * 2 + 1];
         }
-        const uint32_t ret1 = kernel_ch1_.LoadKernel(ch1.get(), frames_per_channel, kConvSegmentSize);
-        const uint32_t ret2 = kernel_ch2_.LoadKernel(ch2.get(), frames_per_channel, kConvSegmentSize);
-        loaded = ret1 != 0 && ret2 != 0;
+        const bool r1 = kernel_ch1_.LoadKernel(ch1.get(), frames_per_channel);
+        const bool r2 = kernel_ch2_.LoadKernel(ch2.get(), frames_per_channel);
+        loaded = r1 && r2;
     }
 
     if (!loaded) {

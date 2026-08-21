@@ -25,7 +25,6 @@ ViPER::ViPER() :
     left_pan_(1.0f),
     right_pan_(1.0f),
     adaptive_buffer_(AdaptiveBuffer(2, 4096)),
-    wave_buffer_(WaveBuffer(2, 4096)),
     iir_filter_(IIRFilter(10)) {
     VIPER_LOGI("Welcome to ViPER FX");
     VIPER_LOGI("Current version is %s (%d)", VERSION_NAME, VERSION_CODE);
@@ -138,31 +137,21 @@ void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
     float *tmp_buf;
     uint32_t tmp_buf_size;
 
-    if (convolver_.GetEnable() || vhe_.GetEnable()) {
-        // PConvSingle now owns internal FIFOs: process any frame_size in-place.
+    if (convolver_.GetEnable()) {
         convolver_.Process(buffer.data(), buffer.data(), size);
+    }
+    if (vhe_.GetEnable()) {
         vhe_.Process(buffer.data(), buffer.data(), size);
+    }
 
-        if (adaptive_buffer_.PushFrames(buffer.data(), size)) {
-            adaptive_buffer_.SetBufferOffset(size);
-            tmp_buf      = adaptive_buffer_.GetBuffer();
-            tmp_buf_size = size;
-        } else {
-            adaptive_buffer_.FlushBuffer();
-            memset(buffer.data(), 0, size * 2 * sizeof(float));
-            return;
-        }
+    if (adaptive_buffer_.PushFrames(buffer.data(), size)) {
+        adaptive_buffer_.SetBufferOffset(size);
+        tmp_buf      = adaptive_buffer_.GetBuffer();
+        tmp_buf_size = size;
     } else {
-        if (adaptive_buffer_.PushFrames(buffer.data(), size)) {
-            adaptive_buffer_.SetBufferOffset(size);
-
-            tmp_buf = adaptive_buffer_.GetBuffer();
-            tmp_buf_size = size;
-        } else {
-            adaptive_buffer_.FlushBuffer();
-            memset(buffer.data(), 0, size * 2 * sizeof(float));
-            return;
-        }
+        adaptive_buffer_.FlushBuffer();
+        memset(buffer.data(), 0, size * 2 * sizeof(float));
+        return;
     }
 
     if (tmp_buf_size != 0) {
@@ -997,8 +986,6 @@ void ViPER::RequestEffectsReset() {
 void ViPER::ResetAllEffects() {
     adaptive_buffer_.FlushBuffer();
 
-    wave_buffer_.Reset();
-
     convolver_.SetSamplingRate(sampling_rate_);
     convolver_.Reset();
 
@@ -1078,7 +1065,6 @@ void ViPER::RequestBuffersReset() {
 
 void ViPER::ResetBuffers() {
     adaptive_buffer_.FlushBuffer();
-    wave_buffer_.Reset();
     reverberation_.Reset();
 }
 
