@@ -3,64 +3,74 @@
 #include <cmath>
 
 IIRFilter::IIRFilter(const uint32_t bands) {
-    if (bands == 10 || bands == 15 || bands == 25 || bands == 31) {
-        bands_ = bands;
-        [[maybe_unused]] const auto ok = min_phase_iir_coeffs_.UpdateCoeffs(bands_, sampling_rate_);
-    }
-    band_levels_with_q_.fill(kDefaultLevelQ);
-    // buf_ and buf_index* already initialized by in-class member defaults.
+    target_gains_.fill(kDefaultLevelQ);
+    current_gains_.fill(kDefaultLevelQ);
+    UpdateGainSmoothCoeff();
+    SetBandCount(bands);
+    // SetBandCount already calls Reset(); no second Reset() needed.
 }
 
-void IIRFilter::Process(float* const samples, const uint32_t size) noexcept {
-    // bands_ == 0 means no valid coefficients have been set yet; return without
-    // touching the buffer so audio passes through unmodified.
-    if (!enable_ || bands_ == 0 || size == 0) return;
+void IIRFilter::Process(std::span<float> samples) noexcept {
+    // bands_ == 0 means no valid coefficients; leave the buffer untouched so
+    // audio passes through unmodified rather than being zeroed.
+    if (!enable_ || bands_ == 0 || samples.empty()) return;
+    [[assume(samples.size() % 2 == 0)]];
 
-    const double* const coeffs = min_phase_iir_coeffs_.GetCoefficients();
-    if (coeffs == nullptr) return;
+    const auto coeffs = min_phase_iir_coeffs_.GetCoefficients();
+    if (coeffs.empty()) return;
 
-    for (uint32_t i = 0; i < size; ++i) {
-        for (uint32_t j = 0; j < 2; ++j) {
-            const double sample = samples[i * 2 + j];
-            double accumulated  = 0.0;
+    const size_t frame_count = samples.size() / 2u;
+    StereoView audio(samples.data(), frame_count, 2u);
 
-            for (uint32_t k = 0; k < bands_; ++k) {
-                const uint32_t buf_idx = buf_index0_ + j * 8 + k * 16;
-                buf_[buf_idx] = sample;
-
-                const double coeff1 = coeffs[k * 4];
-                const double coeff2 = coeffs[k * 4 + 1];
-                const double coeff3 = coeffs[k * 4 + 2];
-
-                const double a = coeff3 * buf_[buf_idx + (buf_index1_ + 3 - buf_index0_)];
-                const double b = coeff2 * (sample - buf_[buf_idx + (buf_index2_ - buf_index0_)]);
-                const double c = coeff1 * buf_[buf_idx + (buf_index2_ - buf_index0_ + 3)];
-
-                const double tmp = a + b - c;
-                // Clamp diverged state to zero so a single bad band does not
-                // poison all subsequent frames via the recursive feedback path.
-                buf_[buf_idx + 3] = std::isfinite(tmp) ? tmp : 0.0;
-                accumulated += buf_[buf_idx + 3] * band_levels_with_q_[k];
-            }
-
-            // If the whole sum is non-finite (e.g. NaN from a corrupt level),
-            // leave the sample untouched rather than zeroing the stream.
-            if (std::isfinite(accumulated)) {
-                samples[i * 2 + j] = static_cast<float>(accumulated);
-            }
+    for (size_t f = 0; f < frame_count; ++f) {
+        // Smooth all gains toward their targets once per frame.
+        // gain_smooth_coeff_ ≈ 1 − e^(−1/(0.02·Fs)), gives τ ≈ 20 ms.
+        for (uint32_t k = 0; k < bands_; ++k) {
+            current_gains_[k] += (target_gains_[k] - current_gains_[k]) * gain_smooth_coeff_;
         }
 
-        buf_index0_ = (buf_index0_ + 1) % 3;
-        buf_index1_ = (buf_index1_ + 1) % 3;
-        buf_index2_ = (buf_index2_ + 1) % 3;
+        // Transposed Direct Form II per stereo channel.
+        // The parallel bank processes all bands against the same dry input, so
+        // the inner band loop has no loop-carried dependency and is
+        // auto-vectorizable across NEON / AVX2 lanes.
+        for (size_t ch = 0; ch < 2; ++ch) {
+            const float in = audio[f, ch];
+            float accumulated = 0.0f;
+
+            #pragma clang loop vectorize(enable)
+            for (uint32_t k = 0; k < bands_; ++k) {
+                const auto& c  = coeffs[k];
+                auto&       st = state_[ch][k];
+
+                // TDF-II (b1=0, b2=-b0):
+                //   y    = b0·x + s1
+                //   s1   = -a1·y + s2
+                //   s2   = -b0·x - a2·y
+                const float y = c.b0 * in + st.s1;
+                st.s1 = -c.a1 * y + st.s2;
+                st.s2 = -c.b0 * in - c.a2 * y;
+
+                // Clamp diverged state so one bad band cannot poison subsequent
+                // frames through the recursive feedback path.
+                if (!std::isfinite(st.s1)) st.s1 = 0.0f;
+                if (!std::isfinite(st.s2)) st.s2 = 0.0f;
+
+                accumulated += y * current_gains_[k];
+            }
+
+            // Leave the sample untouched if the whole sum is non-finite
+            // (e.g. NaN from a corrupt band level) rather than zeroing the stream.
+            if (std::isfinite(accumulated)) [[likely]] {
+                audio[f, ch] = accumulated;
+            }
+        }
     }
 }
 
 void IIRFilter::Reset() noexcept {
-    buf_.fill(0.0);
-    buf_index0_ = 2;
-    buf_index1_ = 1;
-    buf_index2_ = 0;
+    for (auto& ch : state_) ch.fill(BiquadState{});
+    // Snap current gains to target so re-enabling produces no zipper artifact.
+    current_gains_ = target_gains_;
 }
 
 void IIRFilter::SetEnable(const bool enable) noexcept {
@@ -75,29 +85,37 @@ void IIRFilter::SetBandCount(const uint32_t bands) {
     if (bands_ == bands) return;
     bands_ = bands;
     [[maybe_unused]] const auto ok = min_phase_iir_coeffs_.UpdateCoeffs(bands_, sampling_rate_);
-    band_levels_with_q_.fill(kDefaultLevelQ);
+    target_gains_.fill(kDefaultLevelQ);
     Reset();
 }
 
 void IIRFilter::SetBandLevel(const uint32_t band, const float level) noexcept {
-    if (band > 30) return;
-    const double band_level = std::pow(10.0, static_cast<double>(level) / 20.0);
-    band_levels_with_q_[band] = static_cast<float>(band_level * 0.636);
+    if (band >= kMaxBands) return;
+    const double linear_gain = std::pow(10.0, static_cast<double>(level) / 20.0);
+    target_gains_[band] = static_cast<float>(linear_gain * 0.636);
 }
 
-void IIRFilter::SetBandLevels(const float* const levels, const uint32_t count) noexcept {
-    const uint32_t n = std::min(count, 31u);
-    for (uint32_t i = 0; i < n; ++i) {
+void IIRFilter::SetBandLevels(std::span<const float> levels) noexcept {
+    const uint32_t count = std::min(static_cast<uint32_t>(levels.size()), bands_);
+    for (uint32_t i = 0; i < count; ++i) {
         SetBandLevel(i, levels[i]);
     }
 }
 
 void IIRFilter::SetSamplingRate(const uint32_t sampling_rate) {
-    if (sampling_rate_ != sampling_rate) {
+    if (sampling_rate_ != sampling_rate && sampling_rate > 0) {
         sampling_rate_ = sampling_rate;
+        UpdateGainSmoothCoeff();
         if (bands_ != 0) {
-            [[maybe_unused]] const auto ok = min_phase_iir_coeffs_.UpdateCoeffs(bands_, sampling_rate);
+            [[maybe_unused]] const auto ok =
+                min_phase_iir_coeffs_.UpdateCoeffs(bands_, sampling_rate_);
         }
         Reset();
     }
+}
+
+void IIRFilter::UpdateGainSmoothCoeff() noexcept {
+    // τ = 20 ms → coefficient = 1 − e^(−1 / (0.02 · Fs))
+    gain_smooth_coeff_ =
+        1.0f - std::exp(-1.0f / (0.020f * static_cast<float>(sampling_rate_)));
 }

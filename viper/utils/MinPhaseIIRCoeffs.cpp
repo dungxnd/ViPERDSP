@@ -37,59 +37,42 @@ constexpr std::array<float, 31> kFreq31 = {
 
 } // anonymous namespace
 
-const double* MinPhaseIIRCoeffs::GetCoefficients() const noexcept {
-    return coeffs_.data();
-}
-
 float MinPhaseIIRCoeffs::GetIndexFrequency(const uint32_t index) const noexcept {
     switch (bands_) {
-        case 10: return kFreq10[index];
-        case 15: return kFreq15[index];
-        case 25: return kFreq25[index];
-        case 31: return kFreq31[index];
+        case 10: return index < kFreq10.size() ? kFreq10[index] : 0.0f;
+        case 15: return index < kFreq15.size() ? kFreq15[index] : 0.0f;
+        case 25: return index < kFreq25.size() ? kFreq25[index] : 0.0f;
+        case 31: return index < kFreq31.size() ? kFreq31[index] : 0.0f;
         default: return 0.0f;
     }
 }
 
-int MinPhaseIIRCoeffs::UpdateCoeffs(const uint32_t bands, const uint32_t sampling_rate) {
-    if (bands != 10 && bands != 15 && bands != 25 && bands != 31) {
-        return 0;
-    }
+bool MinPhaseIIRCoeffs::UpdateCoeffs(const uint32_t bands, const uint32_t sampling_rate) noexcept {
+    if (bands != 10 && bands != 15 && bands != 25 && bands != 31) return false;
+    if (sampling_rate == 0) return false;
 
     bands_ = bands;
-    coeffs_.assign(bands * 4, 0.0);
+    coeffs_.assign(bands, BiquadBandCoeffs{});
 
-    const float* band_freqs = nullptr;
+    std::span<const float> band_freqs;
     double bandwidth = 0.0;
 
     switch (bands) {
-        case 10:
-            band_freqs = kFreq10.data();
-            bandwidth  = 1.0;
-            break;
-        case 15:
-            band_freqs = kFreq15.data();
-            bandwidth  = 2.0 / 3.0;
-            break;
-        case 25:
-            band_freqs = kFreq25.data();
-            bandwidth  = 1.0 / 3.0;
-            break;
-        case 31:
-            band_freqs = kFreq31.data();
-            bandwidth  = 1.0 / 3.0;
-            break;
-        default:;
+        case 10: band_freqs = kFreq10; bandwidth = 1.0;       break;
+        case 15: band_freqs = kFreq15; bandwidth = 2.0 / 3.0; break;
+        case 25: band_freqs = kFreq25; bandwidth = 1.0 / 3.0; break;
+        case 31: band_freqs = kFreq31; bandwidth = 1.0 / 3.0; break;
+        default: return false;
     }
 
-    // Clamp usable bandwidth to 49 % of Nyquist so bands that approach or exceed
-    // the Nyquist frequency get a safe reduced center rather than producing
-    // degenerate (NaN / Inf) coefficients.
+    // Clamp usable bandwidth to 49 % of Nyquist so bands approaching or
+    // exceeding Nyquist get a safely reduced center rather than degenerate
+    // (NaN / Inf) coefficients.
     const double nyquist_safe = static_cast<double>(sampling_rate) * 0.49;
     const double inv_sr       = 1.0 / static_cast<double>(sampling_rate);
 
     for (uint32_t i = 0; i < bands; ++i) {
-        const double center = std::min(static_cast<double>(band_freqs[i]), nyquist_safe);
+        const double center      = std::min(static_cast<double>(band_freqs[i]), nyquist_safe);
         const auto [lower_raw, upper] = Find_F1_F2(center, bandwidth);
         // Keep the lower edge below 95 % of Nyquist so cos/sin arguments stay valid.
         const double lower = std::min(lower_raw, nyquist_safe * 0.95);
@@ -111,13 +94,17 @@ int MinPhaseIIRCoeffs::UpdateCoeffs(const uint32_t bands, const uint32_t samplin
 
         if (const auto root = SolveRoot(d, e, f); root.has_value()) {
             const double r = *root;
-            coeffs_[i * 4]     = r + r;
-            coeffs_[i * 4 + 1] = 0.5 - r;
-            coeffs_[i * 4 + 2] = (r + 0.5) * cos_x * 2.0;
+            // Map to TDF-II form.  Original DF-I had:
+            //   coeff1 = 2r,  coeff2 = 0.5-r,  coeff3 = (r+0.5)*cos_x*2
+            // TDF-II uses (with b1=0, b2=-b0):
+            //   b0 = coeff2,  a1 = -coeff3,  a2 = coeff1
+            coeffs_[i].b0 = static_cast<float>(0.5 - r);
+            coeffs_[i].a1 = static_cast<float>(-(r + 0.5) * cos_x * 2.0);
+            coeffs_[i].a2 = static_cast<float>(r + r);
         }
     }
 
-    return 1;
+    return true;
 }
 
 MinPhaseIIRCoeffs::FreqPair MinPhaseIIRCoeffs::Find_F1_F2(
@@ -133,7 +120,7 @@ std::optional<double> MinPhaseIIRCoeffs::SolveRoot(
     const double coeff_b,
     const double coeff_c
 ) noexcept {
-    // Guard against d ≈ 0: would produce ±Inf / NaN coefficients that instantly
+    // Guard against d ≈ 0: would produce ±Inf / NaN that instantly
     // destabilise the IIR state variables.
     if (std::abs(coeff_a) < 1e-12) return std::nullopt;
 
@@ -141,16 +128,15 @@ std::optional<double> MinPhaseIIRCoeffs::SolveRoot(
     if (x >= 0.0) return std::nullopt;
 
     const double z = std::sqrt(-x);
-    const double y = coeff_b / (coeff_a + coeff_a);
+    const double y = coeff_b / (coeff_a * 2.0);
     const double a = -y - z;
     const double b = z  - y;
 
-    // The product of the two roots equals 0.25, so exactly one root has |r| < 0.5
-    // (stable pole) and the other has |r| > 0.5 (unstable pole).  Always pick the
-    // stable one; previously the code unconditionally returned 'a' which is the
-    // unstable root whenever d > 0 (high-frequency bands).
+    // The product of the two roots equals 0.25, so exactly one root has
+    // |r| < 0.5 (stable pole) and the other |r| > 0.5 (unstable pole).
+    // Always pick the stable one.
     if (std::abs(a) < 0.5 && std::abs(b) >= 0.5) return a;
     if (std::abs(b) < 0.5 && std::abs(a) >= 0.5) return b;
-    // Both roots inside unit circle (rare): prefer smaller magnitude.
+    // Both inside unit circle (rare): prefer the smaller magnitude.
     return (std::abs(a) < std::abs(b)) ? a : b;
 }
