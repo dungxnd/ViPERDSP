@@ -45,27 +45,19 @@ void PConvZeroLatency::UnloadKernel() noexcept {
 }
 
 // ---------------------------------------------------------------------------
-// Reset — clear all delay-state to silence.
+// Reset — zero all delay-state to silence.
 //
-//   The tail engine emits kTailBlock=128 output samples per FFT block.
-//   It fires for the first time after kTailBlock=128 input samples arrive.
-//   Those 128 output samples represent y_tail[0..127] and must be read at the
-//   same time as y_head[0..127].
-//   Therefore the output FIFO starts EMPTY — no pre-fill needed.
-//   The causal delay is already guaranteed by the overlap-save math: the
-//   first B=128 clean output samples of the tail come out exactly when the
-//   head has also processed 128 samples.
+// Output FIFO starts EMPTY (no pre-fill): the OLS math guarantees that the
+// tail's first B clean output samples arrive exactly when the head has
+// processed B samples, so head + tail sum is causal with zero extra delay.
 // ---------------------------------------------------------------------------
 
 void PConvZeroLatency::Reset() noexcept {
     if (!instance_usable_) return;
 
-    // Head state — clear both halves of the double buffer.
-    std::fill_n(head_history_, kHeadLen * 2u, 0.0f);
+    head_history_.fill(0.0f);
     head_idx_ = 0u;
-
-    // Tail state
-    fdl_idx_ = 0u;
+    fdl_idx_  = 0u;
     std::ranges::fill(prev_input_, 0.0f);
 
     for (uint32_t j = 0; j < tail_partition_count_; ++j) {
@@ -90,8 +82,8 @@ bool PConvZeroLatency::LoadKernel(const std::span<const float> kernel,
 
     // ---- Stage 0: direct-form FIR head (h[0..K-1]) -------------------------
     const uint32_t head_tap_count = std::min(size, kHeadLen);
-    std::fill_n(head_coeffs_,     kHeadLen, 0.0f);
-    std::fill_n(head_coeffs_rev_, kHeadLen, 0.0f);
+    head_coeffs_.fill(0.0f);
+    head_coeffs_rev_.fill(0.0f);
     for (uint32_t k = 0; k < head_tap_count; ++k) {
         head_coeffs_[k] = kernel[k] * gain;
     }
@@ -109,16 +101,14 @@ bool PConvZeroLatency::LoadKernel(const std::span<const float> kernel,
     }
 
     // ---- Stage 1: Uniform OLS tail on h[K..L-1] ----------------------------
-    // OLS parameters: B=128 (new input per block), R=256 (FFT size), overlap=B.
-    // Each partition covers B=128 IR taps. J = ceil((L-K) / B).
-    // 4096-tap HRIR → J = ceil((4096-128)/128) = 31 partitions (was 63 at K=64).
+    // B=128, R=256, J = ceil((L-K)/B). For 4096-tap HRIRs: J = 31 (was 63 at K=64).
     const uint32_t tail_len = size - kHeadLen;
     tail_partition_count_   = (tail_len + kTailBlock - 1u) / kTailBlock;
 
     tail_fft_setup_ = PFFFTRegistry::Instance().Acquire(kTailFFTSz);
     if (!tail_fft_setup_) { ReleaseResources(); return false; }
 
-    auto alloc = [](uint32_t n) -> float* {
+    auto alloc = [](uint32_t n) {
         return static_cast<float*>(pffft_aligned_malloc(n * sizeof(float)));
     };
 
@@ -134,10 +124,8 @@ bool PConvZeroLatency::LoadKernel(const std::span<const float> kernel,
     filter_segs_.resize(tail_partition_count_, nullptr);
     fdl_.resize(tail_partition_count_, nullptr);
 
-    // Zero-padded partition scratch.  64-byte alignment required by PFFFT for
-    // all SIMD paths (ARM NEON vld1.32, x86 movaps).  alignas(64) guarantees
-    // this on both 32-bit and 64-bit targets regardless of stack ABI alignment.
-    alignas(64) float part_buf[kTailFFTSz];
+    // Load-path only scratch (1 KiB); alignas(64) satisfies PFFFT SIMD alignment.
+    alignas(64) std::array<float, kTailFFTSz> part_buf{};
 
     for (uint32_t j = 0; j < tail_partition_count_; ++j) {
         filter_segs_[j] = alloc(kTailFFTSz);
@@ -146,21 +134,17 @@ bool PConvZeroLatency::LoadKernel(const std::span<const float> kernel,
 
         std::fill_n(fdl_[j], kTailFFTSz, 0.0f);
 
-        // Partition j covers IR taps: [kHeadLen + j*kTailBlock .. +kTailBlock-1]
+        // Zero-pad second half so circular ↔ linear conv holds for output[B..2B-1].
         const uint32_t offset   = kHeadLen + j * kTailBlock;
         const uint32_t copy_len = std::min(size - offset, kTailBlock);
-
-        // Zero-pad the second half so circular ↔ linear conv holds for the
-        // clean output samples [B..2B-1].
-        std::fill_n(part_buf, kTailFFTSz, 0.0f);
+        part_buf.fill(0.0f);
         for (uint32_t i = 0; i < copy_len; ++i) {
             part_buf[i] = kernel[offset + i] * gain;
         }
-        pffft_transform(tail_fft_setup_, part_buf, filter_segs_[j], fft_work_, PFFFT_FORWARD);
+        pffft_transform(tail_fft_setup_, part_buf.data(), filter_segs_[j], fft_work_, PFFFT_FORWARD);
     }
 
-    // B historical input samples for the 2B overlap-save window.
-    prev_input_.assign(kTailBlock, 0.0f);
+    prev_input_.assign(kTailBlock, 0.0f);  // B historical samples for 2B OLS window
 
     const std::size_t fifo_cap =
         std::max<std::size_t>(static_cast<std::size_t>(kTailBlock) * 8u, 4096u);
@@ -194,22 +178,16 @@ void PConvZeroLatency::Process(const float* const input,
     for (uint32_t i = 0; i < n; ++i) {
         const float in = input[i];
 
-        // --- Head: direct-form FIR, K=128, 0 latency ------------------------
-        // Double-buffer write: keeps head_history_[j] == head_history_[j+K] so
-        // any K-sample window starting at head_idx_+1 is contiguous in memory.
-        head_history_[head_idx_]             = in;
-        head_history_[head_idx_ + kHeadLen]  = in;
-        // hist_ptr[0..K-1] = x[n-K+1] .. x[n] (oldest to newest).
+        head_history_[head_idx_]            = in;
+        head_history_[head_idx_ + kHeadLen] = in;
         const float* const hist_ptr = &head_history_[head_idx_ + 1u];
         float head_out = 0.0f;
-        // head_coeffs_rev_[k] = h[K-1-k], so the sum equals sum_{k} h[k]*x[n-k].
         #pragma clang loop vectorize(enable)
         for (uint32_t k = 0; k < kHeadLen; ++k) {
             head_out += head_coeffs_rev_[k] * hist_ptr[k];
         }
         head_idx_ = (head_idx_ + 1u) & kHeadMask;
 
-        // --- Tail: dequeue one OLS output sample -----------------------------
         float tail_out = 0.0f;
         if (tail_partition_count_ > 0u && output_fifo_.AvailableRead() > 0u) {
             output_fifo_.Read(&tail_out, 1u);
@@ -217,7 +195,6 @@ void PConvZeroLatency::Process(const float* const input,
 
         output[i] = head_out + tail_out;
 
-        // --- Feed input FIFO; fire tail FFT when B samples are ready ---------
         if (tail_partition_count_ > 0u) {
             input_fifo_.Write(&in, 1u);
             while (input_fifo_.AvailableRead() >= kTailBlock) {
@@ -268,21 +245,16 @@ void PConvZeroLatency::ProcessInterleaved(const float* const input,
 }
 
 // ---------------------------------------------------------------------------
-// ProcessTailBlock — OLS block with R=256, B=128, overlap=128.
+// ProcessTailBlock — OLS block, R=256, B=128.
 //
-//   • fft_in_ = [prev_B(128) | curr_B(128)] = 256 samples.
-//   • Circular convolution of a 2B window against a B-tap filter:
-//       - Aliases affect output[0..B-2] (first B-1 samples) because for
-//         n < L_h-1, wrap-around reaches future samples.
-//       - But L_h ≤ B = 128 per partition, so aliases affect output[0..126].
-//   • Discard first B=128 samples (more than enough to cover the aliased zone).
-//   • Keep output[B..2B-1] = 128 clean linear-convolution samples.
-//   • These 128 samples correspond to the input block that was B samples ago —
-//     exactly the causal delay the head FIR has already compensated for.
+//   fft_in_ = [prev_B | curr_B].  Each partition is B-tap, so circular
+//   aliasing affects output[0..B-2]; discarding the first B samples is
+//   sufficient.  The clean output[B..2B-1] corresponds to the input block
+//   B samples ago — the exact causal offset already provided by the head FIR.
 // ---------------------------------------------------------------------------
 
 void PConvZeroLatency::ProcessTailBlock() noexcept {
-    // 1. Build overlap-save window: [prev_B (64) | curr_B (64)]
+    // 1. Build 2B overlap-save window: [prev_B(128) | curr_B(128)]
     std::copy_n(prev_input_.data(), kTailBlock, fft_in_);
     input_fifo_.Read(fft_in_ + kTailBlock, kTailBlock);
     // Save the new block as the next cycle's overlap.
@@ -307,11 +279,10 @@ void PConvZeroLatency::ProcessTailBlock() noexcept {
     // 4. Inverse FFT → time domain.
     pffft_transform(tail_fft_setup_, accum_, fft_out_, fft_work_, PFFFT_BACKWARD);
 
-    // 5. Overlap-save: discard first B=64 (aliased), keep last B=64 (clean).
-    //    Apply 1/R normalisation (PFFFT IFFT is unnormalised).
-    //    Denormal flush: add/subtract epsilon so decaying tails don't stall CPU.
-    const float norm    = 1.0f / static_cast<float>(kTailFFTSz);
-    const float denorm  = 1e-25f;
+    // 5. OLS: discard first B=128 (aliased), keep last B=128 (clean).
+    //    PFFFT IFFT is unnormalised — apply 1/R. Denormal flush for silent tails.
+    const float norm   = 1.0f / static_cast<float>(kTailFFTSz);
+    const float denorm = 1e-25f;
     for (uint32_t i = 0; i < kTailBlock; ++i) {
         fft_out_[kTailBlock + i] = fft_out_[kTailBlock + i] * norm + denorm - denorm;
     }

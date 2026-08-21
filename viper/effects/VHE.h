@@ -3,11 +3,18 @@
 #include "../utils/PConvZeroLatency.h"
 #include <cstdint>
 
+// Virtual Headphone Engine — applies per-level HRIR pairs via zero-latency
+// hybrid convolution (Gardner OLS, K=128 head + uniform OLS tail).
+// Supports 5 effect levels × {44100, 48000} Hz; kernels are baked as int16
+// quantised arrays and dequantised into PConvZeroLatency on every Reset().
 class VHE {
 public:
     VHE();
 
     uint32_t Process(const float *source, float *dest, uint32_t frame_size);
+
+    // Reloads HRIR kernels for the current (effect_level_, sampling_rate_) pair;
+    // called automatically by SetEnable/SetEffectLevel/SetSamplingRate on change.
     void Reset();
 
     [[nodiscard]] bool GetEnable() const noexcept;
@@ -17,10 +24,9 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    bool enable_{false};
-
-    uint32_t sampling_rate_{44100u};
-    uint32_t effect_level_{0u};
+    bool     enable_        {false};
+    uint32_t sampling_rate_ {44100u};
+    uint32_t effect_level_  {0u};
 
     PConvZeroLatency conv_left_;
     PConvZeroLatency conv_right_;

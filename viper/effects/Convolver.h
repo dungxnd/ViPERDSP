@@ -9,32 +9,57 @@
 #include <thread>
 #include <vector>
 
+// Stereo convolution reverb using PConvNUPC (Non-Uniform Partitioned Convolution).
+// Supports mono and stereo IRs loaded from WAV files, float buffers, or a
+// chunked buffer protocol.  Optional cross-channel blend is applied post-convolution.
+//
+// Thread-safety model (lock-free hot path):
+//   Active kernels (kernel_ch1_/ch2_) are owned exclusively by the audio thread
+//   and mutated only inside ConsumeKernelSwap(), called at the start of Process().
+//   Binder-thread kernel changes build new PConvNUPC instances off-thread, then
+//   publish them through a one-slot staging area protected by a single atomic flag:
+//
+//     Binder: acquire-spin until !pending_, write staging_, release-store pending_=true.
+//     Audio:  acquire-load pending_; if set, swap ptrs (3 moves, zero alloc),
+//             release-store pending_=false.  Old kernels sit in staging_ until the
+//             next CommitToStaging() call overwrites and frees them.
+//
+//   The audio thread never allocates, spins, or holds a lock.
 class Convolver {
 public:
     Convolver();
     ~Convolver() = default;
 
-    // Non-copyable / non-movable: owns unique kernel resources
     Convolver(const Convolver&)            = delete;
     Convolver& operator=(const Convolver&) = delete;
     Convolver(Convolver&&)                 = delete;
     Convolver& operator=(Convolver&&)      = delete;
 
     uint32_t Process(const float* source, float* dest, uint32_t frame_size);
+
+    // Resets runtime state of the active kernels (clears delay lines).
     void Reset();
 
     [[nodiscard]] bool     GetEnable()   const noexcept;
     [[nodiscard]] uint32_t GetKernelID() const noexcept;
 
     void SetEnable(bool enable);
-    void SetKernel(const char* path);
-    void SetKernel(const float* buf, uint32_t size);
-    void SetKernelBuffer(const float* buf, uint32_t size);
-    void SetKernelStereo(const float* ch_l, const float* ch_r, uint32_t frame_count);
     void SetCrossChannel(float value);
     void SetSamplingRate(uint32_t sampling_rate);
 
+    // Kernel loading — all paths execute on the binder thread and publish via
+    // CommitToStaging().  Each normalises the IR with NormalizePeak() before
+    // calling LoadKernel() to guard against unnormalised or DC-biased WAVs.
+    void SetKernel(const char* path);
+    void SetKernel(const float* buf, uint32_t size);
+    void SetKernelStereo(const float* ch_l, const float* ch_r, uint32_t frame_count);
+
+    // Chunked streaming protocol for large in-band IR transfers:
+    //   PrepareKernelBuffer(size, ch_count, reset=false) — allocates receive buffer.
+    //   SetKernelBuffer(buf, size)                       — appends a chunk.
+    //   CommitKernelBuffer(expected_size, crc, id)       — validates CRC and loads.
     void PrepareKernelBuffer(uint32_t buf_size, uint32_t ch_count, bool reset);
+    void SetKernelBuffer(const float* buf, uint32_t size);
     void CommitKernelBuffer(uint32_t expected_size, uint32_t expected_crc, uint32_t kernel_id);
 
 private:
@@ -51,48 +76,24 @@ private:
     std::string        kernel_file_path_;
     std::vector<float> kernel_buffer_;
 
-    // -------------------------------------------------------------------------
-    // Thread-safe kernel lifecycle
-    // -------------------------------------------------------------------------
-    // Active kernels (kernel_ch1_/ch2_) are owned exclusively by the audio
-    // thread.  They are written ONLY in ConsumeKernelSwap(), which is called
-    // at the very start of Process() before any DSP work.
-    //
-    // Staging kernels (staging_ch1_/ch2_) are written exclusively by the
-    // binder thread via CommitToStaging() under kernel_stage_mutex_.
-    //
-    // Protocol:
-    //   Binder: spinwait for !kernel_swap_pending_ (acquire), write staging_,
-    //           store kernel_swap_pending_ = true (release).
-    //   Audio:  load kernel_swap_pending_ (acquire); if true, swap unique_ptr
-    //           pairs (3 pointer moves — no allocation), store false (release).
-    //           Retired kernels land in staging_; freed next time binder
-    //           overwrites them.
-    //
-    // The audio thread never allocates, never spins, never holds any lock.
-    // -------------------------------------------------------------------------
-    std::unique_ptr<PConvNUPC> kernel_ch1_;   // audio-thread owned
-    std::unique_ptr<PConvNUPC> kernel_ch2_;   // audio-thread owned
-    std::unique_ptr<PConvNUPC> staging_ch1_;  // binder-thread owned until swap
-    std::unique_ptr<PConvNUPC> staging_ch2_;  // binder-thread owned until swap
+    // Active kernels: audio-thread only, never touched by the binder thread.
+    std::unique_ptr<PConvNUPC> kernel_ch1_{std::make_unique<PConvNUPC>()};
+    std::unique_ptr<PConvNUPC> kernel_ch2_{std::make_unique<PConvNUPC>()};
 
-    // Written by binder (release) after staging_ is ready.
-    // Cleared by audio (release) after swap completes.
+    // Staging kernels: written by the binder under kernel_stage_mutex_, then
+    // transferred to kernel_ch1_/ch2_ by the audio thread in ConsumeKernelSwap().
+    std::unique_ptr<PConvNUPC> staging_ch1_;
+    std::unique_ptr<PConvNUPC> staging_ch2_;
+
+    // Acquire/release flag — intentionally NOT seq_cst (see ConsumeKernelSwap).
     std::atomic<bool> kernel_swap_pending_{false};
 
-    // Serialises concurrent binder-thread kernel mutations (rare but possible
-    // when multiple IPC calls arrive close together).
+    // Serialises concurrent binder-thread callers (rare; multiple IPC calls can
+    // arrive close together).
     std::mutex kernel_stage_mutex_;
 
-    /// Called once at the start of every Process() call.
-    /// Swaps staging↔active in O(1) with no allocation.
     void ConsumeKernelSwap() noexcept;
-
-    /// Called by all SetKernel*/CommitKernelBuffer paths on the binder thread.
-    /// Blocks (yields) until any previous pending swap has been consumed by
-    /// the audio thread (at most one audio-callback cycle ≈ 1–10 ms).
     void CommitToStaging(std::unique_ptr<PConvNUPC> ch1,
                          std::unique_ptr<PConvNUPC> ch2);
-
     void ClearKernelBuffer() noexcept;
 };

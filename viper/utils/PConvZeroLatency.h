@@ -60,33 +60,27 @@ public:
                             uint32_t n) noexcept;
 
 private:
-    // --- Head / Tail sizing ---
-    // B = K = 128: block size equals head length so OLS discard == head length.
-    // R = 2B = 256: PFFFT-valid size; first B samples discarded, last B clean.
-    // Widening from 64→128 taps halves tail partition count for 4096-tap HRIRs
-    // (63 → 31 partitions), cutting tail FFT call overhead by ~50 %.
-    static constexpr uint32_t kHeadLen   = 128u;  // K  — head FIR tap count
+    // K=B=128: head length equals OLS block size, so OLS discard exactly covers h_head.
+    // R=2B=256: minimum PFFFT-valid transform size; first B aliased, last B clean.
+    // Using K=128 rather than 64 halves tail partition count for 4096-tap HRIRs (63→31),
+    // cutting tail FFT overhead by ~50 %.
+    static constexpr uint32_t kHeadLen   = 128u;  // K — head tap count
     static constexpr uint32_t kHeadMask  = 127u;  // power-of-two wrap mask
-    static constexpr uint32_t kTailBlock = 128u;  // B  — OLS new-input block size
-    static constexpr uint32_t kTailFFTSz = 256u;  // R  = 2*B
+    static constexpr uint32_t kTailBlock = 128u;  // B — OLS block size
+    static constexpr uint32_t kTailFFTSz = 256u;  // R = 2*B
 
-    // --- Runtime state ---
     bool     instance_usable_{false};
     uint32_t tail_partition_count_{0};
 
-    // Head: double-buffer circular history for contiguous SIMD access.
-    //   head_history_[i] and head_history_[i + kHeadLen] always hold the same
-    //   sample, so any K-sample window is contiguous without modulo indexing.
-    //   head_coeffs_rev_[k] = h[K-1-k] (reversed) lets the FIR inner loop read
-    //   oldest-to-newest through a plain pointer increment.
-    float    head_history_[kHeadLen * 2u]{};
-    float    head_coeffs_[kHeadLen]{};
-    float    head_coeffs_rev_[kHeadLen]{};
+    // Double-buffer circular history: head_history_[i] == head_history_[i+K], so any
+    // K-sample window is contiguous — no modulo indexing in the inner loop.
+    // head_coeffs_rev_[k] = h[K-1-k]: reversed so the FIR reads oldest→newest.
+    std::array<float, kHeadLen * 2u> head_history_{};
+    std::array<float, kHeadLen>      head_coeffs_{};
+    std::array<float, kHeadLen>      head_coeffs_rev_{};
     uint32_t head_idx_{0u};
 
-    // Tail UPOLS state
     PFFFT_Setup* tail_fft_setup_{nullptr};
-
     float* fft_in_{nullptr};    // R floats — overlap-save input window
     float* fft_out_{nullptr};   // R floats — IFFT output
     float* fft_work_{nullptr};  // R floats — PFFFT scratch
@@ -96,10 +90,8 @@ private:
     std::vector<float*> fdl_;         // J × R — frequency delay line
     uint32_t fdl_idx_{0u};
 
-    // B-sample historical input for the 2B overlap-save window
-    std::vector<float> prev_input_;  // B floats
+    std::vector<float> prev_input_;   // B historical samples for the 2B OLS window
 
-    // Decoupling FIFOs
     AudioFIFO input_fifo_;
     AudioFIFO output_fifo_;
 

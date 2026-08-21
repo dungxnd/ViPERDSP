@@ -36,8 +36,8 @@ PFFFT_Setup* PFFFTRegistry::Acquire(const uint32_t size) noexcept {
     PFFFT_Setup* setup = pffft_new_setup(static_cast<int>(size), PFFFT_REAL);
     if (!setup) return nullptr;
 
-    entries_.emplace(setup, Entry{.setup = setup, .size = size, .ref_count = 1});
-    by_size_.emplace(size, setup);
+    entries_.try_emplace(setup, Entry{.setup = setup, .size = size, .ref_count = 1});
+    by_size_.try_emplace(size, setup);
     return setup;
 }
 

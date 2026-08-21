@@ -121,6 +121,7 @@ ViPER::ViPER() :
     speaker_correction_.Reset();
 
     for (auto &software_limiter : software_limiters_) {
+        software_limiter.SetSamplingRate(sampling_rate_);
         software_limiter.Reset();
     }
 }
@@ -1055,6 +1056,7 @@ void ViPER::ResetAllEffects() {
     speaker_correction_.Reset();
 
     for (auto &software_limiter : software_limiters_) {
+        software_limiter.SetSamplingRate(sampling_rate_);
         software_limiter.Reset();
     }
 }

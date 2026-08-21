@@ -52,17 +52,17 @@ void PConvNUPC::Reset() noexcept {
     if (!instance_usable_) return;
 
     // Clear both halves of the double-buffer history.
-    std::fill_n(head_history_, kHeadLen * 2u, 0.0f);
+    head_history_.fill(0.0f);
     head_idx_ = 0u;
 
-    std::ranges::fill(accum_ring_, 0.0f);
+    accum_ring_.fill(0.0f);
     ring_read_idx_ = 0u;
 
     for (Stage& s : stages_) {
-        s.fdl_index          = 0u;
-        s.sample_counter     = 0u;
-        s.slice_phase        = 0u;
-        s.phase_sample_count = 0u;
+        s.fdl_index           = 0u;
+        s.sample_counter      = 0u;
+        s.slice_phase         = 0u;
+        s.phase_sample_count  = 0u;
         s.saved_ring_read_idx = 0u;
         std::ranges::fill(s.prev_input, 0.0f);
         for (uint32_t p = 0; p < s.num_partitions; ++p) {
@@ -72,57 +72,127 @@ void PConvNUPC::Reset() noexcept {
 }
 
 // ---------------------------------------------------------------------------
-// LoadKernel
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // CalculateWorkingSetBytes — L2 cache budget estimator
 //
-// Computes the estimated active L2 working-set in bytes for a given tail
-// partition count and FP16 mode.  The estimate covers the data structures
-// that are hot during a single Process() call:
-//
-//   • Head FIR: double-buffer history (2×K floats) + reversed coefficients (K floats).
-//   • Master accumulation ring: kRingSize floats.
-//   • Early groups (Groups 0..3): FDL + filter_spectra per group, both in FP32.
-//     These are fixed-size and derived directly from kGroups so the estimate
-//     stays in sync if the table is changed.
-//   • Tail group (Group 4): FDL always FP32; filter_spectra FP32 or FP16.
-//
-// Scratch buffers (fft_in, fft_out, fft_work, accum_spectrum) are excluded —
-// they are one-per-stage allocations that cycle through at most one stage at
-// a time and are not simultaneously hot.
+// Estimates bytes hot during Process(): head FIR arrays, accum_ring, all
+// early-group FDLs + filter_spectra (FP32), and the tail FDL + spectra
+// (FP32 or FP16).  Per-stage scratch (fft_in/out/work) is excluded — only
+// one stage's scratch is hot at a time.
 // ---------------------------------------------------------------------------
 
 size_t PConvNUPC::CalculateWorkingSetBytes(const uint32_t tail_partitions,
                                             const bool     use_fp16_tail) const noexcept {
     size_t total = 0u;
 
-    // Head FIR: double-buffer history (kHeadLen * 2) + reversed coefficients (kHeadLen).
-    total += static_cast<size_t>(kHeadLen * 3u) * sizeof(float);  // 1.5 KB
+    // Head FIR: 3×K floats (double-buffer history + reversed coefficients).
+    total += static_cast<size_t>(kHeadLen * 3u) * sizeof(float);
 
-    // Master accumulation ring.
-    total += static_cast<size_t>(kRingSize) * sizeof(float);       // 32 KB
+    total += static_cast<size_t>(kRingSize) * sizeof(float);
 
-    // Early groups: iterate kGroups, stopping before the tail entry (UINT32_MAX).
-    // For each group: FDL (num_partitions × fft_size × float)
-    //               + filter_spectra (same, FP32 for all early groups).
+    // Early groups: FDL + filter_spectra, both FP32.  Iterate until tail sentinel.
     for (const auto& [bs, max_p] : kGroups) {
-        if (max_p == UINT32_MAX) break;   // tail sentinel — stop here
+        if (max_p == UINT32_MAX) break;
         const uint32_t fft_sz = bs * 2u;
-        // Both FDL and filter_spectra are FP32.
         total += static_cast<size_t>(max_p) * static_cast<size_t>(fft_sz) * 2u * sizeof(float);
     }
 
-    // Tail group (B=2048, FFT=4096):
-    //   FDL is always FP32.
-    constexpr uint32_t kTailFFTSize = 2048u * 2u;  // = 4096
+    // Tail group (B=2048, FFT=4096): FDL always FP32; spectra FP32 or FP16.
+    constexpr uint32_t kTailFFTSize = 2048u * 2u;
     total += static_cast<size_t>(tail_partitions) * kTailFFTSize * sizeof(float);
-    //   Filter spectra: FP32 or FP16 depending on compression flag.
     const size_t filter_elem = use_fp16_tail ? sizeof(uint16_t) : sizeof(float);
     total += static_cast<size_t>(tail_partitions) * kTailFFTSize * filter_elem;
 
     return total;
+}
+
+// ---------------------------------------------------------------------------
+// LoadKernel — internal helpers
+// ---------------------------------------------------------------------------
+
+// Returns the number of B=2048 tail partitions needed for a given IR size,
+// or 0 if the IR fits entirely in early groups.  No allocation.
+static uint32_t EstimateTailPartitions(const uint32_t size,
+                                        const uint32_t head_len,
+                                        const std::array<PConvNUPC::GroupDesc, 5>& groups) noexcept {
+    uint32_t scan_offset = head_len;
+    for (const auto& [bs, max_p] : groups) {
+        if (scan_offset >= size) return 0u;
+        const uint32_t remaining = size - scan_offset;
+        const uint32_t by_size   = (remaining + bs - 1u) / bs;
+        if (max_p == UINT32_MAX) {
+            return by_size;
+        }
+        const uint32_t used = std::min(max_p, by_size);
+        scan_offset += used * bs;
+    }
+    return 0u;
+}
+
+// Allocate and FFT-transform all partition filter spectra for one stage.
+// Returns false on allocation failure; on failure all locally allocated
+// memory is freed and the caller must call ReleaseResources().
+static bool AllocateStagePartitions(PConvNUPC::Stage& s,
+                                     const std::span<const float> kernel,
+                                     uint32_t& ir_offset,
+                                     const float gain) noexcept {
+    const uint32_t fft_size    = s.fft_size;
+    const uint32_t block_size  = s.block_size;
+    const uint32_t num_parts   = s.num_partitions;
+    const uint32_t kernel_size = static_cast<uint32_t>(kernel.size());
+
+    s.filter_spectra.resize(num_parts, nullptr);
+    s.fdl.resize(num_parts, nullptr);
+
+    // Temporary aligned scratch for zero-padded partition input.
+    // Allocated once here and freed at the end — never survives this function.
+    float* const part_scratch =
+        static_cast<float*>(pffft_aligned_malloc(fft_size * sizeof(float)));
+    if (!part_scratch) return false;
+
+    bool ok = true;
+    for (uint32_t p = 0; p < num_parts && ok; ++p) {
+        s.filter_spectra[p] =
+            static_cast<float*>(pffft_aligned_malloc(fft_size * sizeof(float)));
+        s.fdl[p] =
+            static_cast<float*>(pffft_aligned_malloc(fft_size * sizeof(float)));
+
+        if (!s.filter_spectra[p] || !s.fdl[p]) {
+            // Clean up partially allocated pair.
+            if (s.filter_spectra[p]) { pffft_aligned_free(s.filter_spectra[p]); s.filter_spectra[p] = nullptr; }
+            if (s.fdl[p])            { pffft_aligned_free(s.fdl[p]);            s.fdl[p] = nullptr; }
+            ok = false;
+            break;
+        }
+
+        std::fill_n(s.fdl[p], fft_size, 0.0f);
+
+        // Zero-pad partition into scratch[0..block_size-1].
+        std::fill_n(part_scratch, fft_size, 0.0f);
+        const uint32_t copy_len = std::min(kernel_size - ir_offset, block_size);
+        for (uint32_t i = 0; i < copy_len; ++i) {
+            part_scratch[i] = kernel[ir_offset + i] * gain;
+        }
+
+        pffft_transform(s.fft_setup,
+                        part_scratch,
+                        s.filter_spectra[p],
+                        s.fft_work,
+                        PFFFT_FORWARD);
+
+        ir_offset += block_size;
+        if (ir_offset > kernel_size) ir_offset = kernel_size;
+    }
+
+    pffft_aligned_free(part_scratch);
+
+    if (!ok) {
+        // Free successfully allocated partitions.
+        for (float* p : s.filter_spectra) if (p) pffft_aligned_free(p);
+        for (float* p : s.fdl)            if (p) pffft_aligned_free(p);
+        s.filter_spectra.clear();
+        s.fdl.clear();
+    }
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,8 +210,8 @@ bool PConvNUPC::LoadKernel(const std::span<const float> kernel,
 
     // ---- Stage 0: head FIR (first 128 taps) ---------------------------------
     const uint32_t head_tap_count = std::min(size, kHeadLen);
-    std::fill_n(head_coeffs_,     kHeadLen, 0.0f);
-    std::fill_n(head_coeffs_rev_, kHeadLen, 0.0f);
+    head_coeffs_.fill(0.0f);
+    head_coeffs_rev_.fill(0.0f);
     for (uint32_t k = 0; k < head_tap_count; ++k) {
         head_coeffs_[k] = kernel[k] * gain;
     }
@@ -156,31 +226,13 @@ bool PConvNUPC::LoadKernel(const std::span<const float> kernel,
         return true;
     }
 
-    // ---- Pre-compute tail partition count for the L2 cache budget check -----
-    // Walk kGroups the same way LoadKernel does below, without allocating,
-    // to determine how many tail partitions (B=2048) would be needed.
-    uint32_t tail_partitions_estimate = 0u;
-    {
-        uint32_t scan_offset = kHeadLen;
-        for (const auto& [bs, max_p] : kGroups) {
-            if (scan_offset >= size) break;
-            const uint32_t remaining = size - scan_offset;
-            const uint32_t by_size   = (remaining + bs - 1u) / bs;
-            if (max_p == UINT32_MAX) {
-                tail_partitions_estimate = by_size;
-                break;
-            }
-            const uint32_t used = std::min(max_p, by_size);
-            scan_offset += used * bs;
-        }
-    }
+    // Pre-compute tail count for the L2 budget check (no allocation).
+    const uint32_t tail_partitions_estimate =
+        EstimateTailPartitions(size, kHeadLen, kGroups);
 
-    // ---- Determine whether FP16 tail compression should be enabled ----------
-    // Always disabled on non-AArch64 (intrinsics unavailable).
-    // On AArch64: enabled only when the FP32 working set would exceed the
-    // 50% L2 budget (kMaxAllowedL2Bytes = 256 KB).  Short reverbs that fit
-    // in budget stay in FP32 for better numerical precision.
-    bool enable_fp16_tail = false;
+    // FP16 tail: AArch64 only; enabled when FP32 working set > 256 KB L2 budget.
+    // Short IRs that fit in budget stay FP32 for full numerical precision.
+    [[maybe_unused]] bool enable_fp16_tail = false;
 #if VIPER_USE_FP16_TAIL
     {
         const size_t ws_fp32 = CalculateWorkingSetBytes(tail_partitions_estimate, false);
@@ -189,7 +241,7 @@ bool PConvNUPC::LoadKernel(const std::span<const float> kernel,
 #endif
 
     // ---- NUPC stages: build from IR offset kHeadLen onwards ----------------
-    auto alloc = [](uint32_t n) -> float* {
+    auto alloc = [](uint32_t n) {
         return static_cast<float*>(pffft_aligned_malloc(n * sizeof(float)));
     };
 
@@ -212,18 +264,15 @@ bool PConvNUPC::LoadKernel(const std::span<const float> kernel,
         s.block_size     = block_size;
         s.fft_size       = fft_size;
         s.num_partitions = num_parts;
+        // Precompute IFFT normalisation factor: 1/(2*block_size).
+        // Storing in Stage eliminates the division-in-hot-path pattern and
+        // makes the value statically provably non-zero (block_size >= 128).
+        s.norm           = 1.0f / static_cast<float>(fft_size);
 
-        // ── Causal output offset ──────────────────────────────────────────
-        // The OLS block delay for this stage is exactly block_size samples.
-        // Partition 0 covers IR taps [ir_offset .. ir_offset+Bs-1], so the
-        // linear-convolution result for these taps first becomes valid at
-        // output sample ir_offset.  Ring write position:
-        //   (ring_read_idx_ + ir_offset - block_size)
-        s.output_offset = ir_offset - block_size;
-
-        // ── Time-sliced flag ──────────────────────────────────────────────
-        // The B=2048 tail group spreads FFT+MAC+IFFT across 4 × 512-sample
-        // sub-intervals to prevent periodic 2048-sample CPU micro-spikes.
+        // Causal offset: OLS delay for this stage = block_size samples.
+        // Partition 0 covers taps [ir_offset..+Bs-1]; those results are valid
+        // at output sample ir_offset.  Ring write: read_idx + (ir_offset - Bs).
+        s.output_offset  = ir_offset - block_size;
         s.is_time_sliced = (block_size >= 2048u);
 
         s.fft_setup = PFFFTRegistry::Instance().Acquire(fft_size);
@@ -244,61 +293,25 @@ bool PConvNUPC::LoadKernel(const std::span<const float> kernel,
             return false;
         }
 
-        s.filter_spectra.resize(num_parts, nullptr);
-        s.fdl.resize(num_parts, nullptr);
-
-        // NOTE: reuse s.fft_in as the zero-padded partition scratch buffer —
-        // it is already allocated via pffft_aligned_malloc (64-byte aligned,
-        // satisfying PFFFT's VALIGNED assertion on all ABIs).
-
-        for (uint32_t p = 0; p < num_parts; ++p) {
-            s.filter_spectra[p] = alloc(fft_size);
-            s.fdl[p]            = alloc(fft_size);
-            if (!s.filter_spectra[p] || !s.fdl[p]) {
-                for (uint32_t q = 0; q <= p; ++q) {
-                    if (s.filter_spectra[q]) pffft_aligned_free(s.filter_spectra[q]);
-                    if (s.fdl[q])            pffft_aligned_free(s.fdl[q]);
-                }
-                pffft_aligned_free(s.fft_in);
-                pffft_aligned_free(s.fft_out);
-                pffft_aligned_free(s.fft_work);
-                pffft_aligned_free(s.accum_spectrum);
-                PFFFTRegistry::Instance().Release(s.fft_setup);
-                ReleaseResources();
-                return false;
-            }
-
-            std::fill_n(s.fdl[p], fft_size, 0.0f);
-
-            // Zero-pad partition into fft_in[0..block_size-1]; second half stays
-            // zero (pffft_aligned_malloc is not guaranteed to zero — we do it here).
-            std::fill_n(s.fft_in, fft_size, 0.0f);
-            const uint32_t copy_len = std::min(size - ir_offset, block_size);
-            for (uint32_t i = 0; i < copy_len; ++i) {
-                s.fft_in[i] = kernel[ir_offset + i] * gain;
-            }
-
-            pffft_transform(s.fft_setup,
-                            s.fft_in,
-                            s.filter_spectra[p],
-                            s.fft_work,
-                            PFFFT_FORWARD);
-
-            ir_offset += block_size;
-            if (ir_offset > size) ir_offset = size;
+        // Allocate + FFT all partition filter spectra.
+        // AllocateStagePartitions advances ir_offset as it works.
+        if (!AllocateStagePartitions(s, kernel, ir_offset, gain)) {
+            pffft_aligned_free(s.fft_in);
+            pffft_aligned_free(s.fft_out);
+            pffft_aligned_free(s.fft_work);
+            pffft_aligned_free(s.accum_spectrum);
+            PFFFTRegistry::Instance().Release(s.fft_setup);
+            ReleaseResources();
+            return false;
         }
 
-        // ── FP16 tail conversion (AArch64 only) ───────────────────────────
-        // Activated only when the L2 budget check (above) determined that the
-        // full FP32 working set exceeds kMaxAllowedL2Bytes (256 KB).
 #if VIPER_USE_FP16_TAIL
+        // Convert FP32 filter spectra to FP16 when the L2 budget check triggered.
         if (s.is_time_sliced && enable_fp16_tail) {
             s.filter_spectra_fp16.resize(num_parts, nullptr);
             for (uint32_t p = 0; p < num_parts; ++p) {
-                // Allocate 64-byte-aligned FP16 buffer (half the FP32 size).
-                // Use pffft_aligned_malloc: it guarantees 64-byte alignment on all
-                // platforms and is already linked — ::aligned_alloc is unavailable
-                // on Android NDK's bionic libc.
+                // pffft_aligned_malloc: 64-byte aligned, available on Android NDK
+                // bionic (::aligned_alloc is not).
                 __fp16* buf = static_cast<__fp16*>(
                     pffft_aligned_malloc(fft_size * sizeof(__fp16)));
                 if (!buf) {
@@ -306,9 +319,8 @@ bool PConvNUPC::LoadKernel(const std::span<const float> kernel,
                     s.filter_spectra_fp16.clear();
                     break;
                 }
-                // vcvt_f16_f32: convert 4 FP32 → 4 FP16 per instruction.
-                const float* src  = s.filter_spectra[p];
-                __fp16*      dst  = buf;
+                const float* src = s.filter_spectra[p];
+                __fp16*      dst = buf;
                 for (uint32_t i = 0; i < fft_size; i += 4u) {
                     float32x4_t v32 = vld1q_f32(src + i);
                     float16x4_t v16 = vcvt_f16_f32(v32);
@@ -316,8 +328,7 @@ bool PConvNUPC::LoadKernel(const std::span<const float> kernel,
                 }
                 s.filter_spectra_fp16[p] = buf;
 
-                // Free the FP32 copy — FP16 is now the sole source.
-                pffft_aligned_free(s.filter_spectra[p]);
+                pffft_aligned_free(s.filter_spectra[p]);  // FP16 is now sole source
                 s.filter_spectra[p] = nullptr;
             }
         }
@@ -340,17 +351,13 @@ bool PConvNUPC::LoadKernel(const float* const kernel,
 }
 
 // ---------------------------------------------------------------------------
-// Process — chunk-based, non-interleaved
+// Process — chunk-based non-interleaved DSP path.
 //
-// Key optimisation over the old per-sample loop:
-//   • Compute `chunk` = samples until the soonest stage needs to fire.
-//   • Run the head FIR and ring read over the full chunk (vectorizable).
-//   • Batch-copy input into each stage's fft_in window in one std::copy_n.
-//   • Only call ExecuteStageFFT / ExecuteStageSlice when their counter fires.
-//
-// This eliminates per-sample branch mispredictions on stage counter checks and
-// enables clang's auto-vectorizer to cover the head FIR inner loop over the
-// entire chunk without loop-carried counter increments breaking vectorization.
+// Each iteration computes the largest `chunk` that fits before any stage fires,
+// then runs the head FIR and ring read over the full chunk (SIMD-eligible).
+// Input is batch-copied into stage windows with one std::copy_n per stage.
+// This eliminates per-sample counter branch predictions and enables the
+// head FIR inner loop to be auto-vectorized without loop-carried counters.
 // ---------------------------------------------------------------------------
 
 void PConvNUPC::Process(const float* const input,
@@ -382,26 +389,20 @@ void PConvNUPC::Process(const float* const input,
         // chunk is at least 1 (counters can never be == their limit at this point).
 
         // 2. Head FIR + ring read over `chunk` samples.
-        //    The inner loop is a contiguous dot product (128 elements) with no
-        //    modulo indexing — eligible for full SIMD unroll by clang/gcc.
         for (uint32_t i = 0; i < chunk; ++i) {
             const float in = input[pos + i];
 
-            // Double-buffer write: head_history_[j] == head_history_[j+K] so
-            // the window [head_idx_+1 .. head_idx_+K] is always contiguous.
             head_history_[head_idx_]            = in;
             head_history_[head_idx_ + kHeadLen] = in;
             const float* const hist_ptr = &head_history_[head_idx_ + 1u];
 
             float head_out = 0.0f;
-            // head_coeffs_rev_[k] = h[K-1-k] → sum == sum_k h[k]*x[n-k]
             #pragma clang loop vectorize(enable)
             for (uint32_t k = 0; k < kHeadLen; ++k) {
                 head_out += head_coeffs_rev_[k] * hist_ptr[k];
             }
             head_idx_ = (head_idx_ + 1u) & kHeadMask;
 
-            // Fetch previously accumulated tail sample; clear the ring slot.
             const float tail_out        = accum_ring_[ring_read_idx_];
             accum_ring_[ring_read_idx_] = 0.0f;
             ring_read_idx_              = (ring_read_idx_ + 1u) & kRingMask;
@@ -409,9 +410,8 @@ void PConvNUPC::Process(const float* const input,
             output[pos + i] = head_out + tail_out;
         }
 
-        // 3. Advance stage counters; batch-ingest input; fire stages.
+        // 3. Advance stage counters and fire.
         for (Stage& s : stages_) {
-            // Append chunk samples into the "current" half of fft_in.
             std::copy_n(input + pos,
                         chunk,
                         s.fft_in + s.block_size + s.sample_counter);
@@ -423,12 +423,8 @@ void PConvNUPC::Process(const float* const input,
                     ExecuteStageFFT(s);
                 }
             } else {
-                // Time-sliced stage: feed the slice phase scheduler.
                 ExecuteStageSlice(s, chunk);
                 if (s.sample_counter == s.block_size) {
-                    // Block boundary: reset sample counter; the scheduler
-                    // will have already handled (or is about to handle) the
-                    // block-boundary ForwardFFT phase inside ExecuteStageSlice.
                     s.sample_counter = 0u;
                 }
             }
@@ -449,31 +445,37 @@ void PConvNUPC::ProcessInterleaved(const float* const input,
                                     const uint32_t     n) noexcept {
     if (!instance_usable_ || n == 0) return;
 
-    // Deinterleave → Process → reinterleave.
-    // Stack buffer: max 4096 floats = 16 KiB; within ABI stack limits.
-    // If n exceeds buffer, fall through to a per-sample loop.
+    // Deinterleave → Process → reinterleave using two stack-allocated scratch buffers.
+    //
+    // Stack headroom analysis:
+    //   • kMaxStack = 4096 floats × 2 buffers × 4 bytes = 32 KiB per call.
+    //   • Host frames are bounded to ≤4096 samples by the Android AudioFlinger ABI.
+    //   • Android NDK threads have ≥1 MB of stack (bionic default); POSIX minimum is 64 KiB.
+    //   • 32 KiB ≪ 64 KiB: safe on all supported targets (arm64-v8a, x86_64, armv7).
+    //   • The over-size branch re-uses the same kMaxStack buffers in chunks, so peak
+    //     stack consumption is always ≤ 32 KiB regardless of n.
     constexpr uint32_t kMaxStack = 4096u;
     if (n <= kMaxStack) {
-        alignas(64) float in_buf[kMaxStack];
-        alignas(64) float out_buf[kMaxStack];
+        alignas(64) std::array<float, kMaxStack> in_buf{};
+        alignas(64) std::array<float, kMaxStack> out_buf{};
 
         for (uint32_t i = 0; i < n; ++i) {
             in_buf[i] = input[i * stride + channel];
         }
-        Process(in_buf, out_buf, n);
+        Process(in_buf.data(), out_buf.data(), n);
         for (uint32_t i = 0; i < n; ++i) {
             output[i * stride + channel] = out_buf[i];
         }
     } else {
-        // Rare over-size path: process sample by sample via non-interleaved loop.
+        // Rare over-size path: process in kMaxStack-sized chunks.
         for (uint32_t i = 0; i < n; ) {
             const uint32_t chunk = std::min(n - i, kMaxStack);
-            alignas(64) float in_buf[kMaxStack];
-            alignas(64) float out_buf[kMaxStack];
+            alignas(64) std::array<float, kMaxStack> in_buf{};
+            alignas(64) std::array<float, kMaxStack> out_buf{};
             for (uint32_t j = 0; j < chunk; ++j) {
                 in_buf[j] = input[(i + j) * stride + channel];
             }
-            Process(in_buf, out_buf, chunk);
+            Process(in_buf.data(), out_buf.data(), chunk);
             for (uint32_t j = 0; j < chunk; ++j) {
                 output[(i + j) * stride + channel] = out_buf[j];
             }
@@ -506,8 +508,8 @@ void PConvNUPC::ExecuteStageFFT(Stage& stage) noexcept {
     //    For exactly-4-partition groups, pffft_zconvolve_4x fuses all 4 MACs
     //    into a single pass over accum_spectrum, cutting L1 write-backs by ~75%.
     if (stage.num_partitions == 4u) {
-        const float* fdl_ptrs[4];
-        const float* filter_ptrs[4];
+        std::array<const float*, 4> fdl_ptrs{};
+        std::array<const float*, 4> filter_ptrs{};
         for (uint32_t p = 0; p < 4u; ++p) {
             const uint32_t slot = (stage.fdl_index - p + 4u) % 4u;
             fdl_ptrs[p]    = stage.fdl[slot];
@@ -516,8 +518,8 @@ void PConvNUPC::ExecuteStageFFT(Stage& stage) noexcept {
         // pffft_zconvolve_4x writes ab directly (not accumulate):
         // no need to zero accum_spectrum first.
         pffft_zconvolve_4x(stage.fft_setup,
-                           fdl_ptrs,
-                           filter_ptrs,
+                           fdl_ptrs.data(),
+                           filter_ptrs.data(),
                            stage.accum_spectrum,
                            1.0f);
     } else {
@@ -545,18 +547,50 @@ void PConvNUPC::ExecuteStageFFT(Stage& stage) noexcept {
 
     // 6. Overlap-save: discard first block_size (aliased), scatter the second
     //    block_size into the master ring normalised by 1/(2*block_size).
+    //    stage.norm is precomputed in LoadKernel — no division here.
     //    Denormal flush: prevents CPU subnormal stalls on silent reverb tails.
-    const float norm   = 1.0f / static_cast<float>(stage.fft_size);
     const float denorm = 1e-25f;
     for (uint32_t i = 0; i < stage.block_size; ++i) {
         const uint32_t ring_idx =
             (ring_read_idx_ + stage.output_offset + i) & kRingMask;
-        const float v = stage.fft_out[stage.block_size + i] * norm + denorm - denorm;
+        const float v = stage.fft_out[stage.block_size + i] * stage.norm + denorm - denorm;
         accum_ring_[ring_idx] += v;
     }
 
     // 7. Advance the FDL ring.
     stage.fdl_index = (stage.fdl_index + 1u) % stage.num_partitions;
+}
+
+// ---------------------------------------------------------------------------
+// AccumulateStageMac — shared MAC helper for ExecuteStageSlice
+//
+// Accumulates partitions [p_start, p_end) of the given stage into its
+// accum_spectrum.  Extracted to reduce nesting depth in ExecuteStageSlice's
+// switch cases and to centralise the FP16/FP32 dispatch.
+// ---------------------------------------------------------------------------
+
+void PConvNUPC::AccumulateStageMac(Stage& stage,
+                                    const uint32_t p_start,
+                                    const uint32_t p_end) noexcept {
+    for (uint32_t p = p_start; p < p_end; ++p) {
+        const uint32_t slot =
+            (stage.fdl_index - p + stage.num_partitions) % stage.num_partitions;
+#if VIPER_USE_FP16_TAIL
+        if (!stage.filter_spectra_fp16.empty() && stage.filter_spectra_fp16[p]) {
+            ZconvolveAccumulateFP16(stage.fdl[slot],
+                                   stage.filter_spectra_fp16[p],
+                                   stage.accum_spectrum,
+                                   static_cast<int>(stage.fft_size / 8u));
+        } else
+#endif
+        {
+            pffft_zconvolve_accumulate(stage.fft_setup,
+                                       stage.fdl[slot],
+                                       stage.filter_spectra[p],
+                                       stage.accum_spectrum,
+                                       1.0f);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -573,15 +607,6 @@ void PConvNUPC::ExecuteStageFFT(Stage& stage) noexcept {
 // ---------------------------------------------------------------------------
 
 void PConvNUPC::ExecuteStageSlice(Stage& stage, const uint32_t samples_advanced) noexcept {
-    // Check if a block boundary was reached this chunk (sample_counter just hit
-    // block_size before being reset by the caller).  For time-sliced stages the
-    // caller checks: if (s.sample_counter == s.block_size) → reset, call slice.
-    // We detect the block boundary by checking whether sample_counter BEFORE
-    // this call was exactly block_size.  Since the caller adds `chunk` before
-    // calling us, and chunk was limited to (block_size - sample_counter) or
-    // (kSliceInterval - phase_sample_count % kSliceInterval), we simply
-    // accumulate phase_sample_count and fire phases at multiples of kSliceInterval.
-
     // Case: block boundary hit this call — trigger Phase 1 immediately.
     if (stage.sample_counter == stage.block_size) {
         // Phase 1: Forward FFT.
@@ -611,55 +636,16 @@ void PConvNUPC::ExecuteStageSlice(Stage& stage, const uint32_t samples_advanced)
         stage.slice_phase        += 1u;
 
         switch (stage.slice_phase) {
-            case 2u: {
+            case 2u:
                 // Phase 2: MAC first half of partitions.
-                const uint32_t half = stage.num_partitions / 2u;
-                for (uint32_t p = 0u; p < half; ++p) {
-                    const uint32_t slot =
-                        (stage.fdl_index - p + stage.num_partitions) % stage.num_partitions;
-#if VIPER_USE_FP16_TAIL
-                    if (!stage.filter_spectra_fp16.empty() && stage.filter_spectra_fp16[p]) {
-                        // Ncvec = fft_size / (2*SIMD_SZ) for PFFFT_REAL, SIMD_SZ=4
-                        ZconvolveAccumulateFP16(stage.fdl[slot],
-                                               stage.filter_spectra_fp16[p],
-                                               stage.accum_spectrum,
-                                               static_cast<int>(stage.fft_size / 8u));
-                    } else
-#endif
-                    {
-                        pffft_zconvolve_accumulate(stage.fft_setup,
-                                                   stage.fdl[slot],
-                                                   stage.filter_spectra[p],
-                                                   stage.accum_spectrum,
-                                                   1.0f);
-                    }
-                }
+                AccumulateStageMac(stage, 0u, stage.num_partitions / 2u);
                 break;
-            }
-            case 3u: {
+
+            case 3u:
                 // Phase 3: MAC second half of partitions.
-                const uint32_t half = stage.num_partitions / 2u;
-                for (uint32_t p = half; p < stage.num_partitions; ++p) {
-                    const uint32_t slot =
-                        (stage.fdl_index - p + stage.num_partitions) % stage.num_partitions;
-#if VIPER_USE_FP16_TAIL
-                    if (!stage.filter_spectra_fp16.empty() && stage.filter_spectra_fp16[p]) {
-                        ZconvolveAccumulateFP16(stage.fdl[slot],
-                                               stage.filter_spectra_fp16[p],
-                                               stage.accum_spectrum,
-                                               static_cast<int>(stage.fft_size / 8u));
-                    } else
-#endif
-                    {
-                        pffft_zconvolve_accumulate(stage.fft_setup,
-                                                   stage.fdl[slot],
-                                                   stage.filter_spectra[p],
-                                                   stage.accum_spectrum,
-                                                   1.0f);
-                    }
-                }
+                AccumulateStageMac(stage, stage.num_partitions / 2u, stage.num_partitions);
                 break;
-            }
+
             case 4u: {
                 // Phase 4: Inverse FFT + scatter into ring.
                 pffft_transform(stage.fft_setup,
@@ -668,22 +654,24 @@ void PConvNUPC::ExecuteStageSlice(Stage& stage, const uint32_t samples_advanced)
                                 stage.fft_work,
                                 PFFFT_BACKWARD);
 
-                const float norm   = 1.0f / static_cast<float>(stage.fft_size);
+                // stage.norm is precomputed in LoadKernel — no runtime division.
                 const float denorm = 1e-25f;
                 for (uint32_t i = 0; i < stage.block_size; ++i) {
                     // Use saved_ring_read_idx: the ring position when ForwardFFT
                     // fired, NOT the current (advanced-by-1536-samples) position.
                     const uint32_t ring_idx =
                         (stage.saved_ring_read_idx + stage.output_offset + i) & kRingMask;
-                    const float v = stage.fft_out[stage.block_size + i] * norm + denorm - denorm;
+                    const float v =
+                        stage.fft_out[stage.block_size + i] * stage.norm + denorm - denorm;
                     accum_ring_[ring_idx] += v;
                 }
 
                 // Advance FDL ring and reset phase state.
-                stage.fdl_index  = (stage.fdl_index + 1u) % stage.num_partitions;
+                stage.fdl_index   = (stage.fdl_index + 1u) % stage.num_partitions;
                 stage.slice_phase = 0u;
                 break;
             }
+
             default:
                 break;
         }
@@ -728,10 +716,10 @@ void PConvNUPC::ZconvolveAccumulateFP16(const float* __restrict__ fdl,
         float32x4_t ai1 = va[2*i+3];
 
         // Complex multiply: (ar + j·ai)(br + j·bi) = (ar·br - ai·bi) + j(ar·bi + ai·br)
-        float32x4_t wr0 = vmulq_f32(ar0, br0);                      // ar*br
-        wr0              = vmlsq_f32(wr0,  ai0, bi0);                 // - ai*bi
-        float32x4_t wi0 = vmulq_f32(ai0, br0);                      // ai*br
-        wi0              = vmlaq_f32(wi0,  ar0, bi0);                 // + ar*bi
+        float32x4_t wr0 = vmulq_f32(ar0, br0);
+        wr0              = vmlsq_f32(wr0,  ai0, bi0);
+        float32x4_t wi0 = vmulq_f32(ai0, br0);
+        wi0              = vmlaq_f32(wi0,  ar0, bi0);
 
         float32x4_t wr1 = vmulq_f32(ar1, br1);
         wr1              = vmlsq_f32(wr1,  ai1, bi1);

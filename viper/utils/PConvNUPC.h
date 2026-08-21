@@ -14,6 +14,8 @@
 #else
 #  define VIPER_USE_FP16_TAIL 0
 #endif
+// Type-safe constant usable in if-constexpr and template contexts.
+static constexpr bool kUseFP16Tail = (VIPER_USE_FP16_TAIL != 0);
 
 using PFFFT_Setup = struct PFFFT_Setup;
 
@@ -43,6 +45,47 @@ using PFFFT_Setup = struct PFFFT_Setup;
 
 class PConvNUPC {
 public:
+    // GroupDesc and Stage are public so that file-scope helper functions in
+    // PConvNUPC.cpp can use them without requiring friend declarations.
+    struct GroupDesc {
+        uint32_t block_size;
+        uint32_t max_partitions;
+    };
+
+    struct Stage {
+        uint32_t block_size{0};         // Bs
+        uint32_t fft_size{0};           // 2*Bs
+        uint32_t num_partitions{0};     // P_s
+        uint32_t fdl_index{0};          // circular write head into fdl[]
+        uint32_t sample_counter{0};     // counts [0 .. Bs-1]
+        uint32_t output_offset{0};      // read-ahead offset into accum_ring_
+
+        PFFFT_Setup* fft_setup{nullptr};
+
+        float* fft_in{nullptr};         // 2*Bs: [prev_Bs | curr_Bs]
+        float* fft_out{nullptr};        // 2*Bs
+        float* fft_work{nullptr};       // 2*Bs
+        float* accum_spectrum{nullptr}; // 2*Bs
+        float  norm{0.0f};              // Precomputed 1/(2*Bs) for IFFT normalisation
+
+        std::vector<float*> filter_spectra; // num_partitions × 2*Bs (FP32)
+        std::vector<float*> fdl;            // num_partitions × 2*Bs
+        std::vector<float>  prev_input;     // Bs historical samples
+
+        // Time-sliced tail fields (B=2048 stage only): spreads FFT+MAC+IFFT across
+        // 4 × 512-sample sub-intervals to smooth periodic CPU spikes.
+        bool     is_time_sliced{false};
+        uint32_t slice_phase{0};          // 0=idle, 1=fwd_fft, 2=mac_a, 3=mac_b, 4=ifft
+        uint32_t phase_sample_count{0};   // samples elapsed since last phase boundary
+        uint32_t saved_ring_read_idx{0};  // ring position when ForwardFFT was captured
+
+#if VIPER_USE_FP16_TAIL
+        // FP16 filter spectra for AArch64: halves RAM, L2 bandwidth for Stage 4.
+        // filter_spectra[p] is freed and set to nullptr when FP16 is active.
+        std::vector<__fp16*> filter_spectra_fp16;
+#endif
+    };
+
     PConvNUPC() noexcept = default;
     ~PConvNUPC();
 
@@ -81,59 +124,18 @@ private:
     // Double-buffer circular history: head_history_[i] == head_history_[i+kHeadLen]
     // so any K-sample window is always contiguous — no modulo in the inner loop.
     // head_coeffs_rev_[k] = h[K-1-k] to read oldest→newest via plain pointer walk.
-    float    head_history_[kHeadLen * 2u]{};
-    float    head_coeffs_[kHeadLen]{};
-    float    head_coeffs_rev_[kHeadLen]{};
+    std::array<float, kHeadLen * 2u> head_history_{};
+    std::array<float, kHeadLen>      head_coeffs_{};
+    std::array<float, kHeadLen>      head_coeffs_rev_{};
     uint32_t head_idx_{0u};
 
-    // -------------------------------------------------------------------------
-    // NUPC stage descriptor
-    // -------------------------------------------------------------------------
-    struct Stage {
-        uint32_t block_size{0};         // Bs
-        uint32_t fft_size{0};           // 2*Bs
-        uint32_t num_partitions{0};     // P_s
-        uint32_t fdl_index{0};          // circular write head into fdl[]
-        uint32_t sample_counter{0};     // counts [0 .. Bs-1]
-        uint32_t output_offset{0};      // read-ahead offset into accum_ring_
-
-        PFFFT_Setup* fft_setup{nullptr};
-
-        float* fft_in{nullptr};         // 2*Bs: [prev_Bs | curr_Bs]
-        float* fft_out{nullptr};        // 2*Bs
-        float* fft_work{nullptr};       // 2*Bs
-        float* accum_spectrum{nullptr}; // 2*Bs
-
-        std::vector<float*> filter_spectra; // num_partitions × 2*Bs (FP32)
-        std::vector<float*> fdl;            // num_partitions × 2*Bs
-        std::vector<float>  prev_input;     // Bs historical samples
-
-        // ----- Time-sliced tail fields (only used when is_time_sliced=true) -----
-        // The B=2048 tail stage spreads its FFT+MAC+IFFT work across 4 sub-intervals
-        // of 512 samples each to eliminate periodic CPU micro-spikes in the callback.
-        bool     is_time_sliced{false};
-        uint32_t slice_phase{0};          // 0=idle, 1=fwd_fft, 2=mac_a, 3=mac_b, 4=ifft
-        uint32_t phase_sample_count{0};   // samples elapsed since last phase boundary
-        uint32_t saved_ring_read_idx{0};  // ring position when ForwardFFT was captured
-
-#if VIPER_USE_FP16_TAIL
-        // FP16 filter spectra for AArch64: halves RAM, L2 bandwidth for Stage 4.
-        // filter_spectra[p] is freed and set to nullptr when FP16 is active.
-        std::vector<__fp16*> filter_spectra_fp16;
-#endif
-    };
-
-    // -------------------------------------------------------------------------
-    // Master accumulation ring
-    // -------------------------------------------------------------------------
-    // kRingSize = 2 × 2048 + headroom.  Maximum write distance:
-    //   Group 4 (B=2048, output_offset = ir_offset - 2048).
-    //   For a 5-group schedule, max ir_offset before tail = 128+512+1024+2048+4096 = 7808.
-    //   output_offset_max = 7808 - 2048 = 5760.  Write end: 5760 + 2048 = 7808 < 8192. ✓
+    // Ring sized so the furthest tail write never wraps into unread output.
+    // Max write end: ir_offset_tail(7808) + B_tail(2048) = 9856? No —
+    // output_offset = ir_offset - B = 7808 - 2048 = 5760; write end = 5760+2048=7808 < 8192. ✓
     static constexpr uint32_t kRingSize = 8192u;
     static constexpr uint32_t kRingMask = kRingSize - 1u;
 
-    float    accum_ring_[kRingSize]{};
+    std::array<float, kRingSize> accum_ring_{};
     uint32_t ring_read_idx_{0u};
 
     std::vector<Stage> stages_;
@@ -144,14 +146,13 @@ private:
     // -------------------------------------------------------------------------
     void ExecuteStageFFT(Stage& stage) noexcept;
     void ExecuteStageSlice(Stage& stage, uint32_t samples_advanced) noexcept;
+    // Accumulate num_parts partitions [p_start, p_end) of a stage into its
+    // accum_spectrum.  Used by ExecuteStageSlice Phase 2/3 to avoid deep nesting.
+    void AccumulateStageMac(Stage& stage, uint32_t p_start, uint32_t p_end) noexcept;
 
     // NUPC group table: {block_size, max_partitions_in_group}.
     // Group 4 (last): UINT32_MAX = "all remaining IR partitions".
     // Starting at B=128 (aligned with K=128 head) gives 5 groups vs the previous 6.
-    struct GroupDesc {
-        uint32_t block_size;
-        uint32_t max_partitions;
-    };
     static constexpr std::array<GroupDesc, 5> kGroups{{
         {  128u, 4u },          // Group 0: FFT 256,  covers taps [128..639]
         {  256u, 4u },          // Group 1: FFT 512,  covers taps [640..1663]

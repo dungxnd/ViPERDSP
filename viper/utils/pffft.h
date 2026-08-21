@@ -172,7 +172,7 @@ extern "C" {
 
     All five pointer arrays must have the "simd-compatible" alignment.
   */
-  void pffft_zconvolve_4x(PFFFT_Setup *setup,
+  void pffft_zconvolve_4x(const PFFFT_Setup *setup,
                            const float *dft_a[4], const float *dft_b[4],
                            float *dft_ab, float scaling);
 

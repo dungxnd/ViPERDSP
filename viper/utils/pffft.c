@@ -1813,17 +1813,18 @@ void pffft_zconvolve_accumulate(PFFFT_Setup *s, const float *a, const float *b, 
    treatment in pffft_zconvolve_accumulate, so the result is bit-identical to
    zero-init + 4 × pffft_zconvolve_accumulate.
    --------------------------------------------------------------------------- */
-void pffft_zconvolve_4x(PFFFT_Setup *s,
+void pffft_zconvolve_4x(const PFFFT_Setup *s,
                          const float *dft_a[4], const float *dft_b[4],
                          float *dft_ab, float scaling) {
-  int i, p;
+  int p;
   int Ncvec = s->Ncvec;
-  v4sf * RESTRICT vab = (v4sf*)dft_ab;
+  v4sf *vab = (v4sf*)dft_ab;
   v4sf vscal = LD_PS1(scaling);
 
   /* Save the DC/Nyquist scalar slots that sit in .f[0] of the first two v4sf
      entries — these are real-only bins that bypass the complex loop below. */
-  float dc_sum = 0.0f, ny_sum = 0.0f;
+  float dc_sum = 0.0f;
+  float ny_sum = 0.0f;
   assert(VALIGNED(dft_ab));
   for (p = 0; p < 4; ++p) {
     assert(VALIGNED(dft_a[p]) && VALIGNED(dft_b[p]));
@@ -1835,15 +1836,23 @@ void pffft_zconvolve_4x(PFFFT_Setup *s,
 
   /* Main SIMD loop: accumulate 4 complex products into registers before
      writing to dft_ab once per iteration — no read-modify-write on vab. */
-  for (i = 0; i < Ncvec; i += 2) {
-    v4sf sum_r0 = VZERO(), sum_i0 = VZERO();
-    v4sf sum_r1 = VZERO(), sum_i1 = VZERO();
+  for (int i = 0; i < Ncvec; i += 2) {
+    v4sf sum_r0 = VZERO();
+    v4sf sum_i0 = VZERO();
+    v4sf sum_r1 = VZERO();
+    v4sf sum_i1 = VZERO();
 
     for (p = 0; p < 4; ++p) {
-      const v4sf * RESTRICT va = (const v4sf*)dft_a[p];
-      const v4sf * RESTRICT vb = (const v4sf*)dft_b[p];
-      v4sf ar0, ai0, br0, bi0;
-      v4sf ar1, ai1, br1, bi1;
+      const v4sf *va = (const v4sf*)dft_a[p];
+      const v4sf *vb = (const v4sf*)dft_b[p];
+      v4sf ar0;
+      v4sf ai0;
+      v4sf br0;
+      v4sf bi0;
+      v4sf ar1;
+      v4sf ai1;
+      v4sf br1;
+      v4sf bi1;
 
       ar0 = va[2*i+0]; ai0 = va[2*i+1];
       br0 = vb[2*i+0]; bi0 = vb[2*i+1];
