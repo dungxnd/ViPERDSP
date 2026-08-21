@@ -14,7 +14,8 @@ DynamicEQ::DynamicEQ() {
 
 void DynamicEQ::Process(std::span<float> samples) noexcept {
     if (!enable_ || band_count_ == 0u || samples.empty()) return;
-    [[assume(samples.size() % 2 == 0)]];
+    const size_t sample_count = samples.size();
+    [[assume(sample_count % 2 == 0)]];
 
     const size_t frame_count = samples.size() / 2u;
     // C++23 mdspan: audio[frame, channel] — layout_right maps to samples[frame*2 + ch]
@@ -83,7 +84,8 @@ void DynamicEQ::UpdateSubBlockGain(const BandParam& p, BandState& st) noexcept {
 void DynamicEQ::ApplyBiquadBlock(StereoView& audio, const size_t frame_offset,
                                   const size_t chunk, const uint32_t band) noexcept {
     const auto& fc = coeffs_[band];
-#pragma clang loop vectorize(enable)
+    // TDF-II biquad is a recursive IIR — s1/s2 carry-dependency prevents auto-vectorization.
+#pragma clang loop vectorize(disable)
     for (size_t i = 0u; i < chunk; ++i) {
         for (size_t ch = 0u; ch < 2u; ++ch) {
             const float in = audio[frame_offset + i, ch];
