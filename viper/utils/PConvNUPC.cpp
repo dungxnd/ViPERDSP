@@ -524,6 +524,8 @@ void PConvNUPC::ExecuteStageFFT(Stage& stage) noexcept {
                            1.0f);
     } else {
         // General path (tail stage with arbitrary partition count).
+        // num_partitions is always > 0: LoadKernel breaks before push_back when num_parts==0.
+        [[assume(stage.num_partitions > 0u)]];
         std::fill_n(stage.accum_spectrum, stage.fft_size, 0.0f);
         for (uint32_t p = 0; p < stage.num_partitions; ++p) {
             const uint32_t slot =
@@ -549,6 +551,7 @@ void PConvNUPC::ExecuteStageFFT(Stage& stage) noexcept {
     //    block_size into the master ring normalised by 1/(2*block_size).
     //    stage.norm is precomputed in LoadKernel — no division here.
     //    Denormal flush: prevents CPU subnormal stalls on silent reverb tails.
+    [[assume(stage.num_partitions > 0u)]];
     const float denorm = 1e-25f;
     for (uint32_t i = 0; i < stage.block_size; ++i) {
         const uint32_t ring_idx =
@@ -572,6 +575,8 @@ void PConvNUPC::ExecuteStageFFT(Stage& stage) noexcept {
 void PConvNUPC::AccumulateStageMac(Stage& stage,
                                     const uint32_t p_start,
                                     const uint32_t p_end) noexcept {
+    // num_partitions is always > 0: Stages are only created with num_parts > 0 in LoadKernel.
+    [[assume(stage.num_partitions > 0u)]];
     for (uint32_t p = p_start; p < p_end; ++p) {
         const uint32_t slot =
             (stage.fdl_index - p + stage.num_partitions) % stage.num_partitions;
@@ -667,6 +672,7 @@ void PConvNUPC::ExecuteStageSlice(Stage& stage, const uint32_t samples_advanced)
                 }
 
                 // Advance FDL ring and reset phase state.
+                [[assume(stage.num_partitions > 0u)]];
                 stage.fdl_index   = (stage.fdl_index + 1u) % stage.num_partitions;
                 stage.slice_phase = 0u;
                 break;
