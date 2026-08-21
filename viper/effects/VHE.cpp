@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <vector>
 
 // Kernel descriptor: int16_t pointer pair + effective gain + tap count.
 // gain already incorporates the per-array dequantisation scale so that
@@ -22,13 +21,18 @@ struct VheKernel {
     uint32_t       size;
 };
 
-// Dequantize int16 kernel into a float vector ready for LoadKernel.
-static std::vector<float> Dequantize(const int16_t* src, uint32_t n, float scale) {
-    std::vector<float> out(n);
+// Maximum HRIR tap count across all levels / sample rates.
+// Used to size the stack-allocated dequantisation buffers in Reset().
+// (Checked against kVheKernels: all entries are 4096 or 2047.)
+static constexpr uint32_t kVheMaxKernelSize = 4096u;
+
+// Dequantize int16 kernel into a caller-supplied float buffer.
+// n must be <= kVheMaxKernelSize.
+static void Dequantize(const int16_t* src, uint32_t n, float scale,
+                       float* dst) noexcept {
     for (uint32_t i = 0; i < n; ++i) {
-        out[i] = src[i] * scale;
+        dst[i] = static_cast<float>(src[i]) * scale;
     }
-    return out;
 }
 
 // Indexed by [effect_level][0=44100, 1=48000].
@@ -104,12 +108,16 @@ void VHE::Reset() {
     }
 
     const auto& k = kVheKernels[effect_level_][static_cast<std::size_t>(rate_idx)];
-    // Dequantize once at load time (not on the audio thread).
-    // PConvZeroLatency::LoadKernel applies gain internally.
-    auto left  = Dequantize(k.left,  k.size, k.gain);
-    auto right = Dequantize(k.right, k.size, k.gain_r);
-    conv_left_.LoadKernel(left.data(),  k.size);
-    conv_right_.LoadKernel(right.data(), k.size);
+
+    // Stack-allocated dequantisation buffers — no heap allocation on the
+    // audio thread.  kVheMaxKernelSize = 4096 → 2 × 16 KB on the stack,
+    // well within Android RT thread stack limits (typically ≥ 1 MB).
+    alignas(64) float left_buf[kVheMaxKernelSize];
+    alignas(64) float right_buf[kVheMaxKernelSize];
+    Dequantize(k.left,  k.size, k.gain,   left_buf);
+    Dequantize(k.right, k.size, k.gain_r, right_buf);
+    conv_left_.LoadKernel(left_buf,  k.size);
+    conv_right_.LoadKernel(right_buf, k.size);
 }
 
 bool VHE::GetEnable() const noexcept {
