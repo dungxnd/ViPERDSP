@@ -1,162 +1,264 @@
 #include "DynamicEQ.h"
+#include "../utils/FastAudioMath.h"
 #include <algorithm>
-#include <array>
 #include <cmath>
+#include <numbers>
 
 namespace {
-constexpr float kGainChangeThreshold = 0.1f;
-constexpr float kOvershootRangeDb    = 12.0f;
-constexpr double kMinEnvelope        = 1e-20;
+constexpr float kOvershootRangeDb = 12.0f;
 } // namespace
 
 DynamicEQ::DynamicEQ() {
     Reset();
 }
 
-void DynamicEQ::Process(float *samples, const uint32_t size) {
-    if (!enable_ || band_count_ == 0 || size == 0) return;
+void DynamicEQ::Process(std::span<float> samples) noexcept {
+    if (!enable_ || band_count_ == 0u || samples.empty()) return;
+    [[assume(samples.size() % 2 == 0)]];
 
-    const uint32_t frame_count = size * 2;
+    const size_t frame_count = samples.size() / 2u;
+    // C++23 mdspan: audio[frame, channel] — layout_right maps to samples[frame*2 + ch]
+    StereoView audio(samples.data(), frame_count, 2u);
 
-    for (uint32_t b = 0; b < band_count_; ++b) {
-        auto attack_coeff  = state_[b].attack_coeff;
-        auto release_coeff = state_[b].release_coeff;
-        auto env_l         = state_[b].envelope_l;
-        auto env_r         = state_[b].envelope_r;
-        auto smoothed_gain = state_[b].smoothed_gain_db;
-        auto last_applied  = state_[b].last_applied_gain_db;
-        const float  target_gain = params_[b].target_gain_db;
-        const auto   threshold   = static_cast<double>(params_[b].threshold_db);
+    for (uint32_t b = 0u; b < band_count_; ++b) {
+        auto&       p  = params_[b];
+        auto&       st = state_[b];
+        const auto& fc = coeffs_[b];
 
-        for (uint32_t i = 0; i < frame_count; i += 2) {
-            const auto sample_l = static_cast<double>(samples[i]);
-            const auto sample_r = static_cast<double>(samples[i + 1]);
+        for (size_t f = 0u; f < frame_count; f += kControlPeriod) {
+            const size_t chunk = std::min(static_cast<size_t>(kControlPeriod),
+                                          frame_count - f);
 
-            const double power_l = sample_l * sample_l;
-            const double power_r = sample_r * sample_r;
+            // ----------------------------------------------------------------
+            // 1. Audio-rate envelope tracking (one MAC per channel per frame)
+            // ----------------------------------------------------------------
+            for (size_t i = 0u; i < chunk; ++i) {
+                const float l   = audio[f + i, 0u];
+                const float r   = audio[f + i, 1u];
+                const float p_l = l * l;
+                const float p_r = r * r;
 
-            env_l += (power_l > env_l ? attack_coeff : release_coeff) * (power_l - env_l);
-            env_r += (power_r > env_r ? attack_coeff : release_coeff) * (power_r - env_r);
-
-            const double rms = std::max(std::sqrt(std::max(env_l, env_r)), kMinEnvelope);
-            const double envelope_db   = 20.0 * std::log10(rms);
-            const double overshoot     = envelope_db - threshold;
-
-            double desired_gain_db = 0.0;
-            if (overshoot > 0.0) {
-                const double ratio = std::min(overshoot / kOvershootRangeDb, 1.0);
-                desired_gain_db = static_cast<double>(target_gain) * ratio;
+                st.env_l += (p_l > st.env_l ? st.attack_coeff : st.release_coeff)
+                             * (p_l - st.env_l);
+                st.env_r += (p_r > st.env_r ? st.attack_coeff : st.release_coeff)
+                             * (p_r - st.env_r);
             }
 
-            const double gain_coeff = (std::abs(desired_gain_db) > std::abs(smoothed_gain))
-                                          ? attack_coeff : release_coeff;
-            smoothed_gain += gain_coeff * (desired_gain_db - smoothed_gain);
+            // ----------------------------------------------------------------
+            // 2. Sub-block control (once per 16 samples):
+            //    Power-domain threshold gate skips FastLog2 when signal silent.
+            // ----------------------------------------------------------------
+            const float max_env_sq = std::max(st.env_l, st.env_r);
+            float desired_gain_db  = 0.0f;
 
-            if (const auto current_gain_db = static_cast<float>(smoothed_gain);
-                std::abs(current_gain_db - last_applied) > kGainChangeThreshold) {
-                ConfigureApplicationFilter(b, current_gain_db);
-                last_applied = current_gain_db;
+            if (max_env_sq > p.linear_threshold_sq) {
+                const float env_db    = viper::dsp::FastPowerToDb(max_env_sq);
+                const float overshoot = env_db - p.threshold_db;
+                const float ratio     = std::min(overshoot / kOvershootRangeDb, 1.0f);
+                desired_gain_db       = p.target_gain_db * ratio;
             }
 
-            samples[i]     = static_cast<float>(apply_l_[b].ProcessSample(sample_l));
-            samples[i + 1] = static_cast<float>(apply_r_[b].ProcessSample(sample_r));
+            const float g_coeff = (std::abs(desired_gain_db) > std::abs(st.current_gain_db))
+                                      ? st.attack_coeff : st.release_coeff;
+            st.current_gain_db += g_coeff * (desired_gain_db - st.current_gain_db);
+
+            // Biquad coefficients recomputed at sub-block rate, NOT per sample.
+            // No sin/cos here — trig_cache_ was computed on the last parameter change.
+            FastUpdateBandCoeffs(b, st.current_gain_db);
+
+            // ----------------------------------------------------------------
+            // 3. TDF-II biquad over the sub-block (vectorizable inner loop)
+            // ----------------------------------------------------------------
+#pragma clang loop vectorize(enable)
+            for (size_t i = 0u; i < chunk; ++i) {
+                for (size_t ch = 0u; ch < 2u; ++ch) {
+                    const float in = audio[f + i, ch];
+                    auto& fs = filter_state_[ch][b];
+
+                    const float out = fc.b0 * in + fs.s1;
+                    fs.s1 = fc.b1 * in - fc.a1 * out + fs.s2;
+                    fs.s2 = fc.b2 * in - fc.a2 * out;
+
+                    audio[f + i, ch] = out;
+                }
+            }
         }
-
-        state_[b].envelope_l           = env_l;
-        state_[b].envelope_r           = env_r;
-        state_[b].smoothed_gain_db      = smoothed_gain;
-        state_[b].last_applied_gain_db  = last_applied;
     }
 }
 
-void DynamicEQ::Reset() {
-    for (uint32_t i = 0; i < kMaxBands; ++i) {
-        state_[i] = BandState{};
+// ---------------------------------------------------------------------------
+// FastUpdateBandCoeffs — zero trig ops in the dynamic audio path.
+// cos_w0, sin_w0, alpha are read from trig_cache_[band] which was filled
+// once during PrecomputeTrigConstants() on frequency/Q parameter changes.
+//
+// Peak filter:  A = 10^(gain/40) via FastExp2 (3 cycles, no std::pow)
+//               b1 == a1 == neg_2_cos_w0 — one coefficient shared
+// Shelf filters: still require std::sqrt(A) but that's unavoidable math.
+// ---------------------------------------------------------------------------
+void DynamicEQ::FastUpdateBandCoeffs(const uint32_t band, const float gain_db) noexcept {
+    const auto& p = params_[band];
+    const auto& t = trig_cache_[band];
 
-        apply_l_[i].Reset();
-        apply_r_[i].Reset();
+    const float A = viper::dsp::FastDbToSqrtLinear(gain_db); // 10^(gain/40)
 
+    float a0, a1, a2, b0, b1, b2;
+
+    switch (p.filter_type) {
+        case 1: { // Low Shelf
+            const float sqrtA  = std::sqrt(A);
+            const float S_term = sqrtA * 2.0f
+                                 * (t.sin_w0 * 0.5f
+                                    * std::sqrt((A + 1.0f / A) * (1.0f / p.q - 1.0f) + 2.0f));
+            a0 =  (A + 1.0f) + (A - 1.0f) * t.cos_w0 + S_term;
+            a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * t.cos_w0);
+            a2 =  (A + 1.0f) + (A - 1.0f) * t.cos_w0 - S_term;
+            b0 =  A * ((A + 1.0f) - (A - 1.0f) * t.cos_w0 + S_term);
+            b1 =  2.0f * A * ((A - 1.0f) - (A + 1.0f) * t.cos_w0);
+            b2 =  A * ((A + 1.0f) - (A - 1.0f) * t.cos_w0 - S_term);
+            break;
+        }
+        case 2: { // High Shelf
+            const float sqrtA  = std::sqrt(A);
+            const float S_term = sqrtA * 2.0f
+                                 * (t.sin_w0 * 0.5f
+                                    * std::sqrt((A + 1.0f / A) * (1.0f / p.q - 1.0f) + 2.0f));
+            a0 =  (A + 1.0f) - (A - 1.0f) * t.cos_w0 + S_term;
+            a1 =  2.0f * ((A - 1.0f) - (A + 1.0f) * t.cos_w0);
+            a2 =  (A + 1.0f) - (A - 1.0f) * t.cos_w0 - S_term;
+            b0 =  A * ((A + 1.0f) + (A - 1.0f) * t.cos_w0 + S_term);
+            b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * t.cos_w0);
+            b2 =  A * ((A + 1.0f) + (A - 1.0f) * t.cos_w0 - S_term);
+            break;
+        }
+        default: { // Peak — zero sin/cos, a1 == b1 == neg_2_cos_w0 (identity)
+            const float alpha_A   = t.alpha * A;
+            const float alpha_inv = t.alpha / A;
+            a0 = 1.0f + alpha_inv;
+            a1 = t.neg_2_cos_w0;
+            a2 = 1.0f - alpha_inv;
+            b0 = 1.0f + alpha_A;
+            b1 = t.neg_2_cos_w0; // b1 == a1 always in Peak biquad
+            b2 = 1.0f - alpha_A;
+            break;
+        }
+    }
+
+    const float inv_a0 = 1.0f / a0;
+    coeffs_[band] = {
+        .b0 = b0 * inv_a0,
+        .b1 = b1 * inv_a0,
+        .b2 = b2 * inv_a0,
+        .a1 = a1 * inv_a0,
+        .a2 = a2 * inv_a0
+    };
+}
+
+// ---------------------------------------------------------------------------
+// PrecomputeTrigConstants — called ONLY on frequency or Q parameter changes.
+// Uses double precision for angular frequency accuracy; stores float results.
+// ---------------------------------------------------------------------------
+void DynamicEQ::PrecomputeTrigConstants(const uint32_t band) noexcept {
+    const auto& p = params_[band];
+    const double w0 = 2.0 * std::numbers::pi_v<double>
+                      * static_cast<double>(p.frequency)
+                      / static_cast<double>(sampling_rate_);
+    const float cs = static_cast<float>(std::cos(w0));
+    const float sn = static_cast<float>(std::sin(w0));
+
+    trig_cache_[band] = {
+        .cos_w0       = cs,
+        .sin_w0       = sn,
+        .alpha        = sn / (2.0f * p.q),
+        .neg_2_cos_w0 = -2.0f * cs
+    };
+}
+
+void DynamicEQ::Reset() noexcept {
+    for (uint32_t i = 0u; i < kMaxBands; ++i) {
+        state_[i]           = BandState{};
+        filter_state_[0][i] = BiquadState{};
+        filter_state_[1][i] = BiquadState{};
+        PrecomputeTrigConstants(i);
         RecalcAttackRelease(i);
-        ConfigureApplicationFilter(i, 0.0f);
+        FastUpdateBandCoeffs(i, 0.0f);
     }
 }
 
-void DynamicEQ::SetEnable(const bool enable) {
+void DynamicEQ::SetEnable(const bool enable) noexcept {
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;
     }
 }
 
-void DynamicEQ::SetBandCount(uint32_t count) {
-    count = std::min(count, kMaxBands);
-    if (band_count_ != count) {
-        band_count_ = count;
-        Reset();
-    }
+void DynamicEQ::SetBandCount(const uint32_t count) noexcept {
+    band_count_ = std::min(count, kMaxBands);
 }
 
-void DynamicEQ::SetSamplingRate(const uint32_t sampling_rate) {
-    if (sampling_rate_ != sampling_rate) {
+void DynamicEQ::SetSamplingRate(const uint32_t sampling_rate) noexcept {
+    if (sampling_rate_ != sampling_rate && sampling_rate > 0u) {
         sampling_rate_ = sampling_rate;
         Reset();
     }
 }
 
-void DynamicEQ::SetBandFrequency(const uint32_t band, const float value) {
-    params_[band].frequency = value;
-    ConfigureApplicationFilter(band, 0.0f);
-    state_[band].last_applied_gain_db = 0.0f;
+void DynamicEQ::SetBandFrequency(const uint32_t band, const float value) noexcept {
+    if (band < kMaxBands) {
+        params_[band].frequency = value;
+        PrecomputeTrigConstants(band);
+        FastUpdateBandCoeffs(band, state_[band].current_gain_db);
+    }
 }
 
-void DynamicEQ::SetBandQ(const uint32_t band, const float value) {
-    params_[band].q = value;
-    ConfigureApplicationFilter(band, 0.0f);
-    state_[band].last_applied_gain_db = 0.0f;
+void DynamicEQ::SetBandGain(const uint32_t band, const float value) noexcept {
+    if (band < kMaxBands) params_[band].target_gain_db = value;
 }
 
-void DynamicEQ::SetBandGain(const uint32_t band, const float value) {
-    params_[band].target_gain_db = value;
+void DynamicEQ::SetBandQ(const uint32_t band, const float value) noexcept {
+    if (band < kMaxBands) {
+        params_[band].q = std::max(value, 0.1f);
+        PrecomputeTrigConstants(band);
+        FastUpdateBandCoeffs(band, state_[band].current_gain_db);
+    }
 }
 
-void DynamicEQ::SetBandThreshold(const uint32_t band, const float value) {
-    params_[band].threshold_db = value;
+void DynamicEQ::SetBandThreshold(const uint32_t band, const float value) noexcept {
+    if (band < kMaxBands) {
+        params_[band].threshold_db        = value;
+        // 10^(threshold_db/10): FastDbToPower = FastExp2(db * log2(10)/10)
+        // NOT FastDbToLinear(value*0.5) which would give 10^(db/40) — wrong by 4×
+        params_[band].linear_threshold_sq = viper::dsp::FastDbToPower(value);
+    }
 }
 
-void DynamicEQ::SetBandAttack(const uint32_t band, const float value) {
-    params_[band].attack_ms = value;
-    RecalcAttackRelease(band);
+void DynamicEQ::SetBandAttack(const uint32_t band, const float value) noexcept {
+    if (band < kMaxBands) {
+        params_[band].attack_ms = value;
+        RecalcAttackRelease(band);
+    }
 }
 
-void DynamicEQ::SetBandRelease(const uint32_t band, const float value) {
-    params_[band].release_ms = value;
-    RecalcAttackRelease(band);
+void DynamicEQ::SetBandRelease(const uint32_t band, const float value) noexcept {
+    if (band < kMaxBands) {
+        params_[band].release_ms = value;
+        RecalcAttackRelease(band);
+    }
 }
 
-void DynamicEQ::SetBandFilterType(const uint32_t band, const int value) {
-    static constexpr std::array<MultiBiquad::FilterType, 3> kTypes{{
-        MultiBiquad::FilterType::Peak,
-        MultiBiquad::FilterType::LowShelf,
-        MultiBiquad::FilterType::HighShelf,
-    }};
-    params_[band].filter_type = (value >= 0 && value <= 2)
-        ? kTypes[value]
-        : MultiBiquad::FilterType::Peak;
-    ConfigureApplicationFilter(band, 0.0f);
-    state_[band].last_applied_gain_db = 0.0f;
+void DynamicEQ::SetBandFilterType(const uint32_t band, const int value) noexcept {
+    if (band < kMaxBands) {
+        params_[band].filter_type = std::clamp(value, 0, 2);
+        FastUpdateBandCoeffs(band, state_[band].current_gain_db);
+    }
 }
 
-void DynamicEQ::RecalcAttackRelease(const uint32_t band) {
-    const auto sr = static_cast<double>(sampling_rate_);
-    const auto attack_sec  = static_cast<double>(params_[band].attack_ms)  / 1000.0;
-    const auto release_sec = static_cast<double>(params_[band].release_ms) / 1000.0;
+void DynamicEQ::RecalcAttackRelease(const uint32_t band) noexcept {
+    const auto sr      = static_cast<float>(sampling_rate_);
+    const auto att_sec = params_[band].attack_ms  / 1000.0f;
+    const auto rel_sec = params_[band].release_ms / 1000.0f;
 
-    state_[band].attack_coeff  = (attack_sec  > 0.0) ? 1.0 - std::exp(-1.0 / (attack_sec  * sr)) : 1.0;
-    state_[band].release_coeff = (release_sec > 0.0) ? 1.0 - std::exp(-1.0 / (release_sec * sr)) : 1.0;
-}
-
-void DynamicEQ::ConfigureApplicationFilter(const uint32_t band, const float gain_db) {
-    const auto& p = params_[band];
-    apply_l_[band].RefreshFilter(p.filter_type, gain_db, p.frequency, sampling_rate_, p.q, false);
-    apply_r_[band].RefreshFilter(p.filter_type, gain_db, p.frequency, sampling_rate_, p.q, false);
+    state_[band].attack_coeff  = att_sec > 0.0f
+                                     ? 1.0f - std::exp(-1.0f / (att_sec * sr)) : 1.0f;
+    state_[band].release_coeff = rel_sec > 0.0f
+                                     ? 1.0f - std::exp(-1.0f / (rel_sec * sr)) : 1.0f;
 }
