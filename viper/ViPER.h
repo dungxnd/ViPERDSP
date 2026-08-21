@@ -31,7 +31,6 @@
 #include "effects/ViPERClarity.h"
 #include "effects/ViPERDDC.h"
 #include "utils/AdaptiveBuffer.h"
-#include "utils/WaveBuffer.h"
 
 class ViPER {
 public:
@@ -121,7 +120,6 @@ private:
 
     // Effects
     AdaptiveBuffer adaptive_buffer_;
-    WaveBuffer wave_buffer_;
     Convolver convolver_;
     VHE vhe_;
     ViPERDDC viper_ddc_;

@@ -4,9 +4,26 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <thread>
 #include <vector>
 
-static constexpr int kConvSegmentSize = 0x1000;
+// Scales the IR in-place so its peak absolute value == 1.0f.
+// Returns false for silent IRs (peak < 1e-6f) — caller must reject them.
+// Applied on every user-supplied IR path to guard against explosive feedback
+// from unnormalised WAVs or DC-biased recordings.
+[[nodiscard]] static bool NormalizePeak(float* const data, const uint32_t size) noexcept {
+    float peak = 0.0f;
+    for (uint32_t i = 0; i < size; ++i) {
+        const float v = std::fabs(data[i]);
+        if (v > peak) peak = v;
+    }
+    if (peak < 1e-6f) return false;
+    if (peak > 1.0f) {
+        const float inv = 1.0f / peak;
+        for (uint32_t i = 0; i < size; ++i) data[i] *= inv;
+    }
+    return true;
+}
 
 static void ApplyCrossChannel(float* const buf, const uint32_t n, const float cc) noexcept {
     for (uint32_t i = 0; i < n; ++i) {
@@ -17,10 +34,56 @@ static void ApplyCrossChannel(float* const buf, const uint32_t n, const float cc
     }
 }
 
+Convolver::Convolver() = default;
+
+// ---------------------------------------------------------------------------
+// Lock-free kernel swap (audio thread)
+// ---------------------------------------------------------------------------
+
+void Convolver::ConsumeKernelSwap() noexcept {
+    // acquire load pairs with the release store in CommitToStaging().
+    // Intentionally NOT seq_cst — a full fence on every audio callback
+    // would be unnecessary overhead with no correctness benefit.
+    if (!kernel_swap_pending_.load(std::memory_order_acquire)) return;
+
+    std::swap(kernel_ch1_, staging_ch1_);
+    std::swap(kernel_ch2_, staging_ch2_);
+
+    // release store: retiring kernels in staging_ are now visible to the
+    // binder thread, which will free them on its next CommitToStaging() call.
+    kernel_swap_pending_.store(false, std::memory_order_release);
+}
+
+// Binder thread: serialize callers, yield until any in-flight swap is consumed
+// (≤ 1 audio callback ≈ 1–10 ms), then publish the new kernel pair atomically.
+void Convolver::CommitToStaging(std::unique_ptr<PConvNUPC> ch1,
+                                 std::unique_ptr<PConvNUPC> ch2) {
+    const std::lock_guard lock(kernel_stage_mutex_);
+
+    // acquire spin-wait pairs with the release store in ConsumeKernelSwap().
+    while (kernel_swap_pending_.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+
+    staging_ch1_ = std::move(ch1);
+    staging_ch2_ = std::move(ch2);
+
+    // release store: staging_ writes are now visible to the audio thread's
+    // acquire load in ConsumeKernelSwap().
+    kernel_swap_pending_.store(true, std::memory_order_release);
+}
+
+// ---------------------------------------------------------------------------
+// Audio-thread DSP path
+// ---------------------------------------------------------------------------
+
 uint32_t Convolver::Process(
     const float* const source, float* const dest, const uint32_t frame_size
 ) {
-    if (!enable_ || !kernel_ch1_.InstanceUsable() || !kernel_ch2_.InstanceUsable()
+    // Only place active kernels are mutated on the audio thread.
+    ConsumeKernelSwap();
+
+    if (!enable_ || !kernel_ch1_->InstanceUsable() || !kernel_ch2_->InstanceUsable()
         || frame_size == 0) {
         if (source != dest && frame_size > 0) {
             std::copy_n(source, frame_size * 2u, dest);
@@ -32,9 +95,8 @@ uint32_t Convolver::Process(
         std::copy_n(source, frame_size * 2u, dest);
     }
 
-    // PConvSingle now owns decoupling FIFOs; process arbitrary frame_size directly.
-    kernel_ch1_.ProcessInterleaved(dest, dest, 0u, 2u, frame_size);
-    kernel_ch2_.ProcessInterleaved(dest, dest, 1u, 2u, frame_size);
+    kernel_ch1_->ProcessInterleaved(dest, dest, 0u, 2u, frame_size);
+    kernel_ch2_->ProcessInterleaved(dest, dest, 1u, 2u, frame_size);
 
     if (is_valid_cross_channel_) {
         ApplyCrossChannel(dest, frame_size, cross_channel_);
@@ -44,8 +106,8 @@ uint32_t Convolver::Process(
 }
 
 void Convolver::Reset() {
-    kernel_ch1_.Reset();
-    kernel_ch2_.Reset();
+    if (kernel_ch1_) kernel_ch1_->Reset();
+    if (kernel_ch2_) kernel_ch2_->Reset();
 }
 
 bool     Convolver::GetEnable()   const noexcept { return enable_;    }
@@ -58,102 +120,112 @@ void Convolver::SetEnable(const bool enable) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Kernel loading (binder thread)
+// ---------------------------------------------------------------------------
+
 void Convolver::SetKernel(const char* const path) {
     if (!path || path[0] == '\0') return;
     if (kernel_file_path_ == path) return;
 
-    kernel_ch1_.Reset(); kernel_ch2_.Reset();
-    kernel_ch3_.Reset(); kernel_ch4_.Reset();
-    kernel_ch1_.UnloadKernel(); kernel_ch2_.UnloadKernel();
-    kernel_ch3_.UnloadKernel(); kernel_ch4_.UnloadKernel();
-    is_quad_channel_           = 0;
     current_kernel_buffer_crc_ = 0;
 
     WavData wav;
-    if (!ReadWavFile(path, wav)) {
+    if (!ReadWavFile(path, wav) || wav.frame_count < 16
+        || wav.channels == 0 || wav.channels > 2) {
         kernel_file_path_.clear();
         kernel_id_ = 0;
-        Reset();
+        CommitToStaging(std::make_unique<PConvNUPC>(), std::make_unique<PConvNUPC>());
         return;
     }
 
-    if (wav.frame_count < 16 || wav.channels == 0 || wav.channels > 2) {
-        kernel_file_path_.clear();
-        kernel_id_ = 0;
-        Reset();
-        return;
-    }
+    auto ch1 = std::make_unique<PConvNUPC>();
+    auto ch2 = std::make_unique<PConvNUPC>();
+    bool success = false;
 
-    bool success;
     if (wav.channels == 1) {
-        const uint32_t ret1 = kernel_ch1_.LoadKernel(wav.samples.get(), wav.frame_count, kConvSegmentSize);
-        const uint32_t ret2 = kernel_ch2_.LoadKernel(wav.samples.get(), wav.frame_count, kConvSegmentSize);
-        success = ret1 != 0 && ret2 != 0;
-    } else {
-        auto ch1 = std::make_unique<float[]>(wav.frame_count);
-        auto ch2 = std::make_unique<float[]>(wav.frame_count);
-        for (uint32_t i = 0; i < wav.frame_count; i++) {
-            ch1[i] = wav.samples[i * 2];
-            ch2[i] = wav.samples[i * 2 + 1];
+        if (NormalizePeak(wav.samples.get(), wav.frame_count)) {
+            success = ch1->LoadKernel(wav.samples.get(), wav.frame_count)
+                   && ch2->LoadKernel(wav.samples.get(), wav.frame_count);
         }
-        const uint32_t ret1 = kernel_ch1_.LoadKernel(ch1.get(), wav.frame_count, kConvSegmentSize);
-        const uint32_t ret2 = kernel_ch2_.LoadKernel(ch2.get(), wav.frame_count, kConvSegmentSize);
-        success = ret1 != 0 && ret2 != 0;
+    } else {
+        auto buf1 = std::make_unique<float[]>(wav.frame_count);
+        auto buf2 = std::make_unique<float[]>(wav.frame_count);
+        for (uint32_t i = 0; i < wav.frame_count; ++i) {
+            buf1[i] = wav.samples[i * 2];
+            buf2[i] = wav.samples[i * 2 + 1];
+        }
+        // Normalise channels independently to preserve stereo balance.
+        const bool n1 = NormalizePeak(buf1.get(), wav.frame_count);
+        const bool n2 = NormalizePeak(buf2.get(), wav.frame_count);
+        if (n1 && n2) {
+            success = ch1->LoadKernel(buf1.get(), wav.frame_count)
+                   && ch2->LoadKernel(buf2.get(), wav.frame_count);
+        }
     }
 
     if (success) {
-        is_quad_channel_           = 1;
         kernel_file_path_          = path;
         kernel_id_                 = 0;
         current_kernel_buffer_crc_ = 0;
-        Reset();
     } else {
-        kernel_ch1_.UnloadKernel(); kernel_ch2_.UnloadKernel();
-        kernel_ch3_.UnloadKernel(); kernel_ch4_.UnloadKernel();
         kernel_file_path_.clear();
         kernel_id_ = 0;
-        Reset();
+        ch1 = std::make_unique<PConvNUPC>();
+        ch2 = std::make_unique<PConvNUPC>();
     }
+
+    CommitToStaging(std::move(ch1), std::move(ch2));
 }
 
 void Convolver::SetKernel(const float* const buf, const uint32_t size) {
     if (size < 16) return;
-    kernel_ch1_.Reset();
-    kernel_ch2_.Reset();
-    const uint32_t ret1 = kernel_ch1_.LoadKernel(buf, size, kConvSegmentSize);
-    const uint32_t ret2 = kernel_ch2_.LoadKernel(buf, size, kConvSegmentSize);
-    if (ret1 == 0 || ret2 == 0) {
-        kernel_ch1_.UnloadKernel();
-        kernel_ch2_.UnloadKernel();
+
+    // Work on a local copy so NormalizePeak() does not mutate the caller's buffer.
+    auto tmp = std::make_unique<float[]>(size);
+    std::copy_n(buf, size, tmp.get());
+
+    auto ch1 = std::make_unique<PConvNUPC>();
+    auto ch2 = std::make_unique<PConvNUPC>();
+
+    if (NormalizePeak(tmp.get(), size)) {
+        if (!ch1->LoadKernel(tmp.get(), size) || !ch2->LoadKernel(tmp.get(), size)) {
+            ch1 = std::make_unique<PConvNUPC>();
+            ch2 = std::make_unique<PConvNUPC>();
+        }
     }
+
     kernel_id_                 = 0;
     current_kernel_buffer_crc_ = 0;
-    Reset();
-}
-
-void Convolver::SetKernelBuffer(const float* const buf, uint32_t size) {
-    if (!buf || size == 0 || kernel_buffer_.empty() || expected_size_ == 0) return;
-    if (current_size_ >= expected_size_) return;
-    size = std::min(size, expected_size_ - current_size_);
-    std::copy_n(buf, size, kernel_buffer_.data() + current_size_);
-    current_size_ += size;
+    CommitToStaging(std::move(ch1), std::move(ch2));
 }
 
 void Convolver::SetKernelStereo(
     const float* const ch_l, const float* const ch_r, const uint32_t frame_count
 ) {
     if (frame_count < 16) return;
-    kernel_ch1_.Reset();
-    kernel_ch2_.Reset();
-    const uint32_t ret1 = kernel_ch1_.LoadKernel(ch_l, frame_count, kConvSegmentSize);
-    const uint32_t ret2 = kernel_ch2_.LoadKernel(ch_r, frame_count, kConvSegmentSize);
-    if (ret1 == 0 || ret2 == 0) {
-        kernel_ch1_.UnloadKernel();
-        kernel_ch2_.UnloadKernel();
+
+    auto buf1 = std::make_unique<float[]>(frame_count);
+    auto buf2 = std::make_unique<float[]>(frame_count);
+    std::copy_n(ch_l, frame_count, buf1.get());
+    std::copy_n(ch_r, frame_count, buf2.get());
+
+    auto ch1 = std::make_unique<PConvNUPC>();
+    auto ch2 = std::make_unique<PConvNUPC>();
+
+    // Normalise channels independently to preserve stereo balance.
+    const bool n1 = NormalizePeak(buf1.get(), frame_count);
+    if (const bool n2 = NormalizePeak(buf2.get(), frame_count); n1 && n2) {
+        if (!ch1->LoadKernel(buf1.get(), frame_count)
+            || !ch2->LoadKernel(buf2.get(), frame_count)) {
+            ch1 = std::make_unique<PConvNUPC>();
+            ch2 = std::make_unique<PConvNUPC>();
+        }
     }
+
     kernel_id_                 = 0;
     current_kernel_buffer_crc_ = 0;
-    Reset();
+    CommitToStaging(std::move(ch1), std::move(ch2));
 }
 
 void Convolver::SetCrossChannel(float value) {
@@ -169,15 +241,19 @@ void Convolver::SetSamplingRate(const uint32_t sampling_rate) {
     sampling_rate_ = sampling_rate;
 }
 
+// ---------------------------------------------------------------------------
+// Chunked IR receive buffer
+// ---------------------------------------------------------------------------
+
 void Convolver::PrepareKernelBuffer(
     const uint32_t buf_size, const uint32_t ch_count, const bool reset
 ) {
     if (!reset) {
         if (ch_count - 1 < 2 && buf_size > 0) {
             kernel_buffer_.assign(buf_size, 0.0f);
-            expected_size_  = buf_size;
-            current_size_   = 0;
-            channel_count_  = ch_count;
+            expected_size_ = buf_size;
+            current_size_  = 0;
+            channel_count_ = ch_count;
         }
     } else {
         kernel_buffer_.clear();
@@ -186,11 +262,18 @@ void Convolver::PrepareKernelBuffer(
         current_size_              = 0;
         channel_count_             = 0;
         current_kernel_buffer_crc_ = 0;
-        kernel_ch1_.Reset(); kernel_ch1_.UnloadKernel();
-        kernel_ch2_.Reset(); kernel_ch2_.UnloadKernel();
         kernel_file_path_.clear();
         kernel_id_ = 0;
+        CommitToStaging(std::make_unique<PConvNUPC>(), std::make_unique<PConvNUPC>());
     }
+}
+
+void Convolver::SetKernelBuffer(const float* const buf, uint32_t size) {
+    if (!buf || size == 0 || kernel_buffer_.empty() || expected_size_ == 0) return;
+    if (current_size_ >= expected_size_) return;
+    size = std::min(size, expected_size_ - current_size_);
+    std::copy_n(buf, size, kernel_buffer_.data() + current_size_);
+    current_size_ += size;
 }
 
 void Convolver::CommitKernelBuffer(
@@ -212,38 +295,45 @@ void Convolver::CommitKernelBuffer(
     current_kernel_buffer_crc_ = calculated_crc;
 
     const uint32_t frames_per_channel = current_size_ / channel_count_;
-    bool loaded;
+
+    auto ch1 = std::make_unique<PConvNUPC>();
+    auto ch2 = std::make_unique<PConvNUPC>();
+    bool loaded = false;
 
     if (channel_count_ == 1) {
-        const uint32_t ret1 = kernel_ch1_.LoadKernel(kernel_buffer_.data(), frames_per_channel, kConvSegmentSize);
-        const uint32_t ret2 = kernel_ch2_.LoadKernel(kernel_buffer_.data(), frames_per_channel, kConvSegmentSize);
-        loaded = ret1 != 0 && ret2 != 0;
-    } else {
-        auto ch1 = std::make_unique<float[]>(frames_per_channel);
-        auto ch2 = std::make_unique<float[]>(frames_per_channel);
-        for (uint32_t i = 0; i < frames_per_channel; ++i) {
-            ch1[i] = kernel_buffer_[i * 2];
-            ch2[i] = kernel_buffer_[i * 2 + 1];
+        auto tmp = std::make_unique<float[]>(frames_per_channel);
+        std::copy_n(kernel_buffer_.data(), frames_per_channel, tmp.get());
+        if (NormalizePeak(tmp.get(), frames_per_channel)) {
+            loaded = ch1->LoadKernel(tmp.get(), frames_per_channel)
+                  && ch2->LoadKernel(tmp.get(), frames_per_channel);
         }
-        const uint32_t ret1 = kernel_ch1_.LoadKernel(ch1.get(), frames_per_channel, kConvSegmentSize);
-        const uint32_t ret2 = kernel_ch2_.LoadKernel(ch2.get(), frames_per_channel, kConvSegmentSize);
-        loaded = ret1 != 0 && ret2 != 0;
+    } else {
+        auto buf1 = std::make_unique<float[]>(frames_per_channel);
+        auto buf2 = std::make_unique<float[]>(frames_per_channel);
+        for (uint32_t i = 0; i < frames_per_channel; ++i) {
+            buf1[i] = kernel_buffer_[i * 2];
+            buf2[i] = kernel_buffer_[i * 2 + 1];
+        }
+        const bool n1 = NormalizePeak(buf1.get(), frames_per_channel);
+        const bool n2 = NormalizePeak(buf2.get(), frames_per_channel);
+        if (n1 && n2) {
+            loaded = ch1->LoadKernel(buf1.get(), frames_per_channel)
+                  && ch2->LoadKernel(buf2.get(), frames_per_channel);
+        }
     }
 
     if (!loaded) {
-        kernel_ch1_.UnloadKernel();
-        kernel_ch2_.UnloadKernel();
         current_kernel_buffer_crc_ = 0;
         kernel_id_ = 0;
-        ClearKernelBuffer();
-        Reset();
-        return;
+        ch1 = std::make_unique<PConvNUPC>();
+        ch2 = std::make_unique<PConvNUPC>();
+    } else {
+        kernel_file_path_.clear();
+        kernel_id_ = kernel_id;
     }
 
-    kernel_file_path_.clear();
-    kernel_id_ = kernel_id;
     ClearKernelBuffer();
-    Reset();
+    CommitToStaging(std::move(ch1), std::move(ch2));
 }
 
 void Convolver::ClearKernelBuffer() noexcept {

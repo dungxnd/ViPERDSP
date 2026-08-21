@@ -2,14 +2,14 @@
 #include <cmath>
 #include <algorithm>
 
-static constexpr uint32_t kLookahead = 256;
-static constexpr float kReleaseTauSec = 0.080f;
-static constexpr float kDenormFix = 1e-25f;
-static const float kReleaseCoeff =
-    1.0f - std::exp(-1.0f / (kReleaseTauSec * 44100.0f));
+static constexpr uint32_t kLookahead    = 256;
+static constexpr float    kReleaseTauSec = 0.080f;  // 80 ms release time constant
+static constexpr float    kDenormFix    = 1e-25f;
 
 SoftwareLimiter::SoftwareLimiter() {
-    // all members have in-class defaults; Reset() clears the arrays
+    // SetSamplingRate initialises release_coeff_ from the default 48 kHz rate,
+    // then Reset() clears all runtime state.
+    SetSamplingRate(sampling_rate_);
     Reset();
 }
 
@@ -23,7 +23,7 @@ float SoftwareLimiter::Process(float sample) noexcept {
 
     const float target_gain = window_peak > gate_ ? gate_ / window_peak : 1.0f;
     const float released    =
-        gain_envelope_ + kReleaseCoeff * (1.0f - gain_envelope_) + kDenormFix;
+        gain_envelope_ + release_coeff_ * (1.0f - gain_envelope_) + kDenormFix;
     float gain = std::min(target_gain, released);
     if (gain > 1.0f) gain = 1.0f;
     gain_envelope_ = gain;
@@ -54,4 +54,14 @@ void SoftwareLimiter::Reset() noexcept {
 
 void SoftwareLimiter::SetGate(const float gate) noexcept {
     gate_ = gate;
+}
+
+void SoftwareLimiter::SetSamplingRate(const uint32_t sampling_rate) noexcept {
+    // Guard against divide-by-zero for pathological rates; clamp to 1 Hz minimum.
+    const uint32_t fs = sampling_rate > 0u ? sampling_rate : 1u;
+    sampling_rate_ = fs;
+    // One-pole coefficient for a first-order IIR with time constant τ:
+    //   c = 1 − exp(−1 / (τ · fs))
+    // At 44.1 kHz: c ≈ 2.837e-4; at 48 kHz: c ≈ 2.604e-4.
+    release_coeff_ = 1.0f - std::exp(-1.0f / (kReleaseTauSec * static_cast<float>(fs)));
 }
