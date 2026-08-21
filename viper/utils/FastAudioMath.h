@@ -12,6 +12,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <numbers>
 
 namespace viper::dsp {
 
@@ -22,12 +23,14 @@ namespace viper::dsp {
 // PRECONDITION: x > 0. Undefined for x <= 0. Guard with std::max(x, epsilon).
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline float FastLog2(const float x) noexcept {
-    const uint32_t i   = std::bit_cast<uint32_t>(x);
-    const auto     exp = static_cast<int32_t>((i >> 23u) & 0xFFu) - 127;
+    const auto  i   = std::bit_cast<uint32_t>(x);
+    const auto  exp = static_cast<int32_t>((i >> 23u) & 0xFFu) - 127;
     // Isolate mantissa in [1.0, 2.0), then shift to [0.0, 1.0)
-    const float m = std::bit_cast<float>((i & 0x007FFFFFu) | 0x3F800000u) - 1.0f;
+    const float m   = std::bit_cast<float>((i & 0x007FFFFFu) | 0x3F800000u) - 1.0f;
     // Minimax polynomial approximation for log2(1 + m), m ∈ [0, 1)
-    const float poly = m * (1.44269504f + m * (-0.72134752f + m * 0.27869504f));
+    // Coefficients: 1/ln(2) = log2e, and the Horner-form minimax remainders
+    const float poly = m * (std::numbers::log2e_v<float>
+                       + m * (-0.72134752f + m * 0.27869504f));
     return static_cast<float>(exp) + poly;
 }
 
@@ -41,7 +44,9 @@ namespace viper::dsp {
     const float ipart = std::floor(clp);
     const float fpart = clp - ipart;
     // Minimax polynomial for 2^fpart, fpart ∈ [0, 1)
-    const float poly  = 1.0f + fpart * (0.69314718f + fpart * (0.24022650f + fpart * 0.05550411f));
+    // Leading coefficient is ln(2) = 1/log2(e)
+    const float poly  = 1.0f + fpart * (std::numbers::ln2_v<float>
+                        + fpart * (0.24022650f + fpart * 0.05550411f));
     // Reconstruct exponent bits: (ipart + 127) << 23 gives 2^ipart as float
     const auto  ebits = static_cast<uint32_t>(static_cast<int32_t>(ipart) + 127) << 23u;
     return poly * std::bit_cast<float>(ebits);

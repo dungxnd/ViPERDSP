@@ -21,72 +21,79 @@ void DynamicEQ::Process(std::span<float> samples) noexcept {
     StereoView audio(samples.data(), frame_count, 2u);
 
     for (uint32_t b = 0u; b < band_count_; ++b) {
-        auto& p  = params_[b];
-        auto& st = state_[b];
-        // NOTE: fc is scoped inside the sub-block loop (after FastUpdateBandCoeffs)
-        // so the compiler reads fresh coefficients and never caches stale values.
+        const auto& p = params_[b];
+        auto&       st = state_[b];
 
         for (size_t f = 0u; f < frame_count; f += kControlPeriod) {
             const size_t chunk = std::min(static_cast<size_t>(kControlPeriod),
                                           frame_count - f);
-
-            // ----------------------------------------------------------------
-            // 1. Audio-rate envelope tracking (one MAC per channel per frame)
-            // ----------------------------------------------------------------
-            for (size_t i = 0u; i < chunk; ++i) {
-                const float l   = audio[f + i, 0u];
-                const float r   = audio[f + i, 1u];
-                const float p_l = l * l;
-                const float p_r = r * r;
-
-                st.env_l += (p_l > st.env_l ? st.attack_coeff : st.release_coeff)
-                             * (p_l - st.env_l);
-                st.env_r += (p_r > st.env_r ? st.attack_coeff : st.release_coeff)
-                             * (p_r - st.env_r);
-            }
-
-            // ----------------------------------------------------------------
-            // 2. Sub-block control (once per kControlPeriod samples):
-            //    Power-domain threshold gate skips FastLog2 when signal silent.
-            //    Gain smoother uses subblock_*_coeff (scaled to K-sample dt).
-            // ----------------------------------------------------------------
-            const float max_env_sq = std::max(st.env_l, st.env_r);
-            float desired_gain_db  = 0.0f;
-
-            if (max_env_sq > p.linear_threshold_sq) {
-                const float env_db    = viper::dsp::FastPowerToDb(max_env_sq);
-                const float overshoot = env_db - p.threshold_db;
-                const float ratio     = std::min(overshoot / kOvershootRangeDb, 1.0f);
-                desired_gain_db       = p.target_gain_db * ratio;
-            }
-
-            // Sub-block coefficient: α = 1 - exp(-K/τ·fs), not the per-sample α
-            const float g_coeff = (std::abs(desired_gain_db) > std::abs(st.current_gain_db))
-                                      ? st.subblock_attack_coeff : st.subblock_release_coeff;
-            st.current_gain_db += g_coeff * (desired_gain_db - st.current_gain_db);
-
-            // Biquad coefficients recomputed at sub-block rate.
-            // No sin/cos — trig_cache_ was populated on the last parameter change.
+            TrackEnvelope(audio, f, chunk, st);
+            UpdateSubBlockGain(p, st);
             FastUpdateBandCoeffs(b, st.current_gain_db);
+            // fc acquired after FastUpdateBandCoeffs writes coeffs_[b] — never stale
+            ApplyBiquadBlock(audio, f, chunk, b);
+        }
+    }
+}
 
-            // ----------------------------------------------------------------
-            // 3. TDF-II biquad over the sub-block (vectorizable inner loop).
-            //    fc is acquired HERE — after FastUpdateBandCoeffs writes coeffs_[b].
-            // ----------------------------------------------------------------
-            const auto& fc = coeffs_[b];
+// ---------------------------------------------------------------------------
+// TrackEnvelope — audio-rate power envelope follower, one MAC per channel.
+// Runs at full sample rate; uses per-sample attack/release coefficients.
+// ---------------------------------------------------------------------------
+void DynamicEQ::TrackEnvelope(StereoView& audio, const size_t frame_offset,
+                               const size_t chunk, BandState& st) noexcept {
+    for (size_t i = 0u; i < chunk; ++i) {
+        const float l   = audio[frame_offset + i, 0u];
+        const float r   = audio[frame_offset + i, 1u];
+        const float p_l = l * l;
+        const float p_r = r * r;
+
+        st.env_l += (p_l > st.env_l ? st.attack_coeff : st.release_coeff)
+                     * (p_l - st.env_l);
+        st.env_r += (p_r > st.env_r ? st.attack_coeff : st.release_coeff)
+                     * (p_r - st.env_r);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// UpdateSubBlockGain — runs once per kControlPeriod samples.
+// Power-domain gate skips FastLog2 when signal is below threshold.
+// Uses subblock_*_coeff (α = 1 - exp(-K/τ·fs)) for correct rate scaling.
+// ---------------------------------------------------------------------------
+void DynamicEQ::UpdateSubBlockGain(const BandParam& p, BandState& st) noexcept {
+    const float max_env_sq = std::max(st.env_l, st.env_r);
+    float desired_gain_db  = 0.0f;
+
+    if (max_env_sq > p.linear_threshold_sq) {
+        const float env_db    = viper::dsp::FastPowerToDb(max_env_sq);
+        const float overshoot = env_db - p.threshold_db;
+        const float ratio     = std::min(overshoot / kOvershootRangeDb, 1.0f);
+        desired_gain_db       = p.target_gain_db * ratio;
+    }
+
+    const float g_coeff = (std::abs(desired_gain_db) > std::abs(st.current_gain_db))
+                              ? st.subblock_attack_coeff : st.subblock_release_coeff;
+    st.current_gain_db += g_coeff * (desired_gain_db - st.current_gain_db);
+}
+
+// ---------------------------------------------------------------------------
+// ApplyBiquadBlock — TDF-II biquad over the sub-block chunk.
+// Called AFTER FastUpdateBandCoeffs writes coeffs_[band] — coeffs always fresh.
+// ---------------------------------------------------------------------------
+void DynamicEQ::ApplyBiquadBlock(StereoView& audio, const size_t frame_offset,
+                                  const size_t chunk, const uint32_t band) noexcept {
+    const auto& fc = coeffs_[band];
 #pragma clang loop vectorize(enable)
-            for (size_t i = 0u; i < chunk; ++i) {
-                for (size_t ch = 0u; ch < 2u; ++ch) {
-                    const float in = audio[f + i, ch];
-                    auto& fs = filter_state_[ch][b];
+    for (size_t i = 0u; i < chunk; ++i) {
+        for (size_t ch = 0u; ch < 2u; ++ch) {
+            const float in = audio[frame_offset + i, ch];
+            auto&       fs = filter_state_[ch][band];
 
-                    const float out = fc.b0 * in + fs.s1;
-                    fs.s1 = fc.b1 * in - fc.a1 * out + fs.s2;
-                    fs.s2 = fc.b2 * in - fc.a2 * out;
+            const float out = fc.b0 * in + fs.s1;
+            fs.s1 = fc.b1 * in - fc.a1 * out + fs.s2;
+            fs.s2 = fc.b2 * in - fc.a2 * out;
 
-                    audio[f + i, ch] = out;
-                }
-            }
+            audio[frame_offset + i, ch] = out;
         }
     }
 }
@@ -167,8 +174,8 @@ void DynamicEQ::PrecomputeTrigConstants(const uint32_t band) noexcept {
     const double w0 = 2.0 * std::numbers::pi_v<double>
                       * static_cast<double>(p.frequency)
                       / static_cast<double>(sampling_rate_);
-    const float cs = static_cast<float>(std::cos(w0));
-    const float sn = static_cast<float>(std::sin(w0));
+    const auto cs = static_cast<float>(std::cos(w0));
+    const auto sn = static_cast<float>(std::sin(w0));
 
     trig_cache_[band] = {
         .cos_w0       = cs,
@@ -270,7 +277,7 @@ void DynamicEQ::RecalcAttackRelease(const uint32_t band) noexcept {
 
     // Sub-block alpha — for kControlPeriod-rate gain smoother (dt = K/sr)
     // Equivalent to: 1 - (1 - α_sample)^K
-    const float K = static_cast<float>(kControlPeriod);
+    const auto K = static_cast<float>(kControlPeriod);
     state_[band].subblock_attack_coeff  = att_sec > 0.0f
         ? 1.0f - std::exp(-K / (att_sec * sr)) : 1.0f;
     state_[band].subblock_release_coeff = rel_sec > 0.0f

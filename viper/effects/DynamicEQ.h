@@ -41,8 +41,11 @@ private:
     };
 
     struct FilterCoeffs {
-        float b0{1.0f}, b1{0.0f}, b2{0.0f};
-        float a1{0.0f}, a2{0.0f};
+        float b0{1.0f};
+        float b1{0.0f};
+        float b2{0.0f};
+        float a1{0.0f};
+        float a2{0.0f};
     };
 
     // Trig invariants cached on parameter change; hot path uses zero sin/cos.
@@ -90,4 +93,11 @@ private:
     void PrecomputeTrigConstants(uint32_t band) noexcept;
     void RecalcAttackRelease(uint32_t band) noexcept;
     void FastUpdateBandCoeffs(uint32_t band, float gain_db) noexcept;
+
+    // Sub-functions extracted from Process() to satisfy ≤3 nesting depth
+    void TrackEnvelope(StereoView& audio, size_t frame_offset,
+                       size_t chunk, BandState& st) noexcept;
+    void UpdateSubBlockGain(const BandParam& p, BandState& st) noexcept;
+    void ApplyBiquadBlock(StereoView& audio, size_t frame_offset,
+                          size_t chunk, uint32_t band) noexcept;
 };

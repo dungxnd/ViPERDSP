@@ -8,8 +8,17 @@
 // ---------------------------------------------------------------------------
 namespace {
 
-struct BiquadCoeffs { float b0, b1, b2, a1, a2; };
-struct KWeightCoeffs { BiquadCoeffs stage1; BiquadCoeffs stage2; };
+struct BiquadCoeffs {
+    float b0;
+    float b1;
+    float b2;
+    float a1;
+    float a2;
+};
+struct KWeightCoeffs {
+    BiquadCoeffs stage1;
+    BiquadCoeffs stage2;
+};
 
 constexpr KWeightCoeffs kKWeight48k = {
     { 1.5351248f, -2.6916962f, 1.1983928f, -1.6906593f, 0.7324808f },
@@ -47,9 +56,8 @@ LUFSTargeting::LUFSTargeting() {
 void LUFSTargeting::UpdateWindow() noexcept {
     if (window_sample_count_ < window_size_) return;
 
-    const float mean_square = window_accumulator_ / static_cast<float>(window_sample_count_);
-
-    if (mean_square > kGateThreshold) {
+    if (const float mean_square = window_accumulator_ / static_cast<float>(window_sample_count_);
+        mean_square > kGateThreshold) {
         // O(1) running sum: remove the value about to be overwritten, add new
         running_power_sum_ -= window_power_[window_write_idx_];
         window_power_[window_write_idx_] = mean_square;
@@ -87,7 +95,8 @@ void LUFSTargeting::Process(std::span<float> samples) noexcept {
     //    Zero transcendental calls in this loop.
     // ----------------------------------------------------------------
     for (size_t i = 0u; i < frame_count; ++i) {
-        float k_l, k_r;
+        float k_l;
+        float k_r;
         stage1_.Process(samples[i * 2u], samples[i * 2u + 1u], k_l, k_r);
         stage2_.Process(k_l, k_r, k_l, k_r);
 

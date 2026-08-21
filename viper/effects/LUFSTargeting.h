@@ -28,11 +28,16 @@ private:
     // Stereo-interleaved TDF-II biquad: shared coefficients, independent L/R state.
     // alignas(16) lets the compiler pack s1_l/s1_r/s2_l/s2_r into a 128-bit register.
     struct alignas(16) StereoTDF2Biquad {
-        float b0{1.0f}, b1{0.0f}, b2{0.0f};
-        float a1{0.0f}, a2{0.0f};
+        float b0{1.0f};
+        float b1{0.0f};
+        float b2{0.0f};
+        float a1{0.0f};
+        float a2{0.0f};
         // State registers — laid out for 2-lane SIMD auto-vectorization
-        float s1_l{0.0f}, s1_r{0.0f};
-        float s2_l{0.0f}, s2_r{0.0f};
+        float s1_l{0.0f};
+        float s1_r{0.0f};
+        float s2_l{0.0f};
+        float s2_r{0.0f};
 
         inline void Process(float in_l, float in_r,
                             float& out_l, float& out_r) noexcept {
