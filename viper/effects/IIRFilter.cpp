@@ -12,12 +12,13 @@ IIRFilter::IIRFilter(const uint32_t bands) {
 void IIRFilter::Process(std::span<float> samples) noexcept {
     // bands_ == 0 means no valid coefficients; leave the buffer untouched (passthrough).
     if (!enable_ || bands_ == 0 || samples.empty()) return;
-    [[assume(samples.size() % 2 == 0)]];
+    const size_t size = samples.size();
+    [[assume(size % 2 == 0)]];
 
     const auto coeffs = min_phase_iir_coeffs_.GetCoefficients();
     if (coeffs.empty()) return;
 
-    const size_t frame_count = samples.size() / 2u;
+    const size_t frame_count = size / 2u;
     StereoView audio(samples.data(), frame_count, 2u);
 
     for (size_t f = 0; f < frame_count; ++f) {

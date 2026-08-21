@@ -141,9 +141,10 @@ void ViPERBass::ProcessSubwoofer(std::span<float> samples, StereoView audio) noe
 
 void ViPERBass::Process(std::span<float> samples) noexcept {
     if (!enable_ || samples.empty()) return;
-    [[assume(samples.size() % 2 == 0)]];
+    const size_t size = samples.size();
+    [[assume(size % 2 == 0)]];
 
-    StereoView audio(samples.data(), samples.size() / 2, 2u);
+    StereoView audio(samples.data(), size / 2, 2u);
 
     using enum ProcessMode;
     switch (process_mode_) {
