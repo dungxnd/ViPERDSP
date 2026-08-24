@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/HiFi.h"
 #include "../utils/HighShelf.h"
 #include "../utils/NoiseSharpening.h"
@@ -20,9 +23,10 @@ public:
 
     ViPERClarity();
 
-    void Process(float *samples, uint32_t size) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetProcessMode(ClarityMode mode) noexcept;
     void SetClarityGain(float value) noexcept;
@@ -30,6 +34,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    void Process(float *samples, uint32_t size) noexcept;
+
     bool enable_{false};
 
     ClarityMode process_mode_{ClarityMode::Natural};
@@ -41,4 +47,5 @@ private:
     NoiseSharpening         noise_sharpening_;
     std::array<HighShelf, 2> high_shelf_{};
     HiFi                    hifi_;
+    alignas(64) std::array<float, 4096u * 2u> scratch_{};
 };

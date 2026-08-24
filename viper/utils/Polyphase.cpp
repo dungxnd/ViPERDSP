@@ -108,6 +108,39 @@ void Polyphase::Reset() noexcept {
 // Coefficient order: coeffs_[0] multiplies the NEWEST sample (x[n]),
 // coeffs_[k] multiplies x[n-k].  Tap 31 is the centre (peak) of the
 // symmetric Blackman-sinc kernel.
+void Polyphase::ProcessPlanar(const float* __restrict in_l, const float* __restrict in_r,
+                               float* __restrict out_l,       float* __restrict out_r,
+                               const size_t frames) noexcept {
+    const float* const __restrict c = coeffs_.data();
+
+    for (size_t i = 0u; i < frames; ++i) {
+        history_idx_ = (history_idx_ - 1u) & kHistIdxMask;
+
+        const float l = in_l[i];
+        const float r = in_r[i];
+
+        history_[0][history_idx_]            = l;
+        history_[0][history_idx_ + kHistCap] = l;
+        history_[1][history_idx_]            = r;
+        history_[1][history_idx_ + kHistCap] = r;
+
+        const float* const __restrict hist_l = &history_[0][history_idx_];
+        const float* const __restrict hist_r = &history_[1][history_idx_];
+
+        float sum_l = 0.0f;
+        float sum_r = 0.0f;
+
+#pragma clang loop vectorize(enable)
+        for (uint32_t k = 0u; k < kNumTaps; ++k) {
+            sum_l += c[k] * hist_l[k];
+            sum_r += c[k] * hist_r[k];
+        }
+
+        out_l[i] = sum_l;
+        out_r[i] = sum_r;
+    }
+}
+
 void Polyphase::Process(float* const samples, const uint32_t size) noexcept {
     if (!samples || size == 0u) return;
 

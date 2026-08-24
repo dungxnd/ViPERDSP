@@ -3,9 +3,13 @@
 #include <array>
 #include <atomic>
 #include <optional>
+#include <span>
+#include <tuple>
 #include <vector>
 
 #include "ViPERParams.h"
+#include "core/AudioContext.h"
+#include "core/ParamExchange.h"
 #include "effects/AnalogX.h"
 #include "effects/ColorfulMusic.h"
 #include "effects/Convolver.h"
@@ -30,7 +34,6 @@
 #include "effects/ViPERBassMono.h"
 #include "effects/ViPERClarity.h"
 #include "effects/ViPERDDC.h"
-#include "utils/AdaptiveBuffer.h"
 
 class ViPER {
 public:
@@ -47,6 +50,10 @@ public:
     void RequestBuffersReset();
     void ResetBuffers();
 
+    // Stage a new parameter snapshot for the RT thread to consume on the
+    // next Process() call.  Safe to call from any non-RT thread.
+    // Does NOT mutate effect state directly — the RT thread applies the
+    // snapshot at the top of Process() via ApplyParamsToEffects().
     void ApplyParams(const viper::ViPERParams &params);
     void ApplyMasterLimiter(const viper::MasterLimiterParams &p);
     void ApplyPlaybackGainControl(const viper::PlaybackGainControlParams &p);
@@ -107,6 +114,12 @@ public:
         }
     }
 
+    // ── Private helpers ────────────────────────────────────────────────────
+
+    // Apply a parameter snapshot to all effect objects.
+    // Called exclusively from the RT audio thread inside Process().
+    void ApplyParamsToEffects(const viper::ViPERParams &params);
+
 private:
     std::atomic<bool> pending_effects_reset_{false};
     std::atomic<bool> pending_buffers_reset_{false};
@@ -118,8 +131,20 @@ private:
     float left_pan_;
     float right_pan_;
 
+    // ── Control-plane / data-plane parameter exchange ──────────────────────
+    // IPC thread writes via ApplyParams(); RT thread reads at top of Process().
+    viper::core::DoubleBufferedState<viper::ViPERParams> param_exchange_;
+
+    // Accumulates incremental DispatchRawParam() mutations so the RT thread
+    // always sees a consistent full-state snapshot via param_exchange_.
+    viper::ViPERParams staged_params_;
+
+    // Cache-aligned planar scratch block for the end-to-end SoA pipeline.
+    // ONE deinterleave at ingress, ONE interleave at egress; all effects run
+    // in the planar domain between those two passes.
+    viper::core::AudioProcessContext<4096> planar_context_;
+
     // Effects
-    AdaptiveBuffer adaptive_buffer_;
     Convolver convolver_;
     VHE vhe_;
     ViPERDDC viper_ddc_;
@@ -145,5 +170,51 @@ private:
     SpeakerCorrection speaker_correction_;
     std::array<SoftwareLimiter, 2> software_limiters_;
 
+    // Tracks the last snapshot successfully applied to effects (delta-check
+    // guard inside ApplyParamsToEffects).
     viper::ViPERParams last_applied_;
+
+    // ── DRY effect tuple for fold-expression lifecycle ops ─────────────────
+    // Contains non-owning pointers to the named effect members above so that
+    // ResetAllEffects() and the Process() DSP chain collapse to single fold
+    // expressions.  Populated at the end of the ViPER constructor.
+    template <typename... Effects>
+    using EffectPtrTuple = std::tuple<Effects*...>;
+
+    EffectPtrTuple<
+        Convolver, VHE, ViPERDDC, SpectrumExtend, IIRFilter,
+        DynamicEQ, ColorfulMusic, StereoImager, DiffSurround,
+        PlaybackGain, MultibandCompressor, FETCompressor, DynamicSystem,
+        TubeSimulator, PsychoacousticBass, ViPERBass, ViPERBassMono,
+        ViPERClarity, Cure, AnalogX, Reverberation, SpeakerCorrection,
+        LUFSTargeting
+    > effect_ptrs_;
+
+    // ── Active-stage compacted pipeline dispatcher ─────────────────────────
+    // Rebuilt whenever parameters change (enabled-set changes).
+    // Only enabled effects appear — zero dispatch overhead for disabled stages.
+    struct PipelineStage {
+        void* instance{nullptr};
+        void (*process_fn)(void* instance, std::span<float> L, std::span<float> R) noexcept {nullptr};
+    };
+    static constexpr size_t kMaxPipelineStages = 24u;
+    std::array<PipelineStage, kMaxPipelineStages> active_stages_{};
+    size_t active_stage_count_{0u};
+
+    template <typename T>
+    static void InvokeStage(void* inst, std::span<float> L, std::span<float> R) noexcept {
+        static_cast<T*>(inst)->ProcessPlanar(L, R);
+    }
+
+    template <typename T>
+    void AddStageIfEnabled(T& effect) noexcept {
+        if (effect.IsEnabled()) {
+            active_stages_[active_stage_count_++] = PipelineStage{
+                .instance   = &effect,
+                .process_fn = &InvokeStage<T>
+            };
+        }
+    }
+
+    void RebuildActivePipelineTopology() noexcept;
 };

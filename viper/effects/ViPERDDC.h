@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include <array>
 #include <vector>
 #include <cstdint>
@@ -8,9 +11,10 @@ class ViPERDDC {
 public:
     ViPERDDC();
 
-    void Process(float *samples, uint32_t size) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetCoeffs(
         uint32_t coeffs_size, const float *coeffs_44100, const float *coeffs_48000
@@ -18,6 +22,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    void Process(float *samples, uint32_t size) noexcept;
+
     bool enable_{false};
     bool set_coeffs_ok_{false};
 

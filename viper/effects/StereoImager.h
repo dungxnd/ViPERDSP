@@ -1,10 +1,11 @@
 #pragma once
 
-#include "../utils/MultiBiquad.h"
+#include <span>
+
+
+#include "../dsp/LinkwitzRileyCrossover.h"
 #include <array>
 #include <cstdint>
-#include <vector>
-
 class StereoImager {
 public:
     static constexpr uint32_t kNumBands      = 3;
@@ -12,9 +13,10 @@ public:
 
     StereoImager();
 
-    void Process(float *samples, uint32_t size) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetLowWidth(float value) noexcept;
     void SetMidWidth(float value) noexcept;
@@ -24,6 +26,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    void Process(float *samples, uint32_t size) noexcept;
+
     bool enable_{false};
 
     uint32_t sampling_rate_{44100u};
@@ -31,16 +35,14 @@ private:
     std::array<float, kNumBands>      band_widths_{1.0f, 1.0f, 1.0f};
     std::array<float, kNumCrossovers> crossover_freqs_{200.0f, 4000.0f};
 
-    std::array<MultiBiquad, kNumCrossovers> lowpass_la_{};
-    std::array<MultiBiquad, kNumCrossovers> lowpass_lb_{};
-    std::array<MultiBiquad, kNumCrossovers> lowpass_ra_{};
-    std::array<MultiBiquad, kNumCrossovers> lowpass_rb_{};
-    std::array<MultiBiquad, kNumCrossovers> highpass_la_{};
-    std::array<MultiBiquad, kNumCrossovers> highpass_lb_{};
-    std::array<MultiBiquad, kNumCrossovers> highpass_ra_{};
-    std::array<MultiBiquad, kNumCrossovers> highpass_rb_{};
+    viper::dsp::LinkwitzRileyCrossover<kNumBands> crossover_{};
 
-    std::array<std::vector<float>, kNumBands> band_buffers_{};
+    // Pre-allocated: eliminates RT-unsafe resize() in Process().
+    static constexpr uint32_t kMaxFrames = 4096u;
+    // scratch_l_/scratch_r_ hold the per-band copy fed to ProcessBand().
+    // band_buffers_ is eliminated — band outputs accumulate directly into L/R.
+    alignas(64) std::array<float, kMaxFrames> scratch_l_{};
+    alignas(64) std::array<float, kMaxFrames> scratch_r_{};
 
     void ConfigureCrossovers() noexcept;
 };

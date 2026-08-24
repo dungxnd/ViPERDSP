@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/QuadricTube.h"
 #include "../utils/QuadricTubeWDF.h"
 #include "../utils/MultiBiquad.h"
@@ -28,9 +31,10 @@ public:
 
     TubeSimulator();
 
-    void Process(float *buffer, uint32_t size) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetTubeType(int model) noexcept;
     void SetTubeMode(int mode) noexcept;
@@ -40,6 +44,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    void Process(float *buffer, uint32_t size) noexcept;
+
     bool     enable_{false};
     TubeType tube_type_{TubeType::k12AX7};
     TubeMode tube_mode_{TubeMode::kStatic};

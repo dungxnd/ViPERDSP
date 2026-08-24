@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/Harmonic.h"
 #include "../utils/MultiBiquad.h"
 #include <array>
@@ -9,15 +12,18 @@ class SpectrumExtend {
 public:
     SpectrumExtend();
 
-    void Process(float *samples, uint32_t size) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetExciter(float value) noexcept;
     void SetReferenceFrequency(uint32_t value) noexcept;
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    void Process(float *samples, uint32_t size) noexcept;
+
     bool enable_{false};
 
     uint32_t sampling_rate_{44100u};

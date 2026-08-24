@@ -20,6 +20,13 @@ public:
         Process(samples.data(), static_cast<uint32_t>(samples.size() / 2u));
     }
 
+    // Process separate L/R planar arrays in-place (zero interleave bounce).
+    // in_l/in_r are the input arrays; out_l/out_r receive the FIR output.
+    // in_l/out_l and in_r/out_r may alias (in-place is safe).
+    void ProcessPlanar(const float* __restrict in_l, const float* __restrict in_r,
+                       float* __restrict out_l,       float* __restrict out_r,
+                       size_t frames) noexcept;
+
     void Reset() noexcept;
 
     [[nodiscard]] static constexpr uint32_t GetLatency() noexcept { return kLatency; }

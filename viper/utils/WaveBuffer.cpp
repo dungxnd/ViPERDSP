@@ -3,8 +3,8 @@
 #include <cstdint>
 #include <ranges>
 
-WaveBuffer::WaveBuffer(const uint32_t channels, const uint32_t length)
-    : channels_(channels), buffer_(static_cast<std::size_t>(length) * channels) {}
+WaveBuffer::WaveBuffer(const uint32_t channels, [[maybe_unused]] const uint32_t length)
+    : channels_(channels) {}
 
 void WaveBuffer::Reset() noexcept {
     index_ = 0;
@@ -16,7 +16,7 @@ uint32_t WaveBuffer::GetBufferOffset() const noexcept {
 }
 
 uint32_t WaveBuffer::GetBufferSize() const noexcept {
-    return static_cast<uint32_t>(buffer_.size()) / channels_;
+    return static_cast<uint32_t>(kMaxCapacity) / channels_;
 }
 
 float *WaveBuffer::GetBuffer() noexcept {
@@ -24,14 +24,14 @@ float *WaveBuffer::GetBuffer() noexcept {
 }
 
 void WaveBuffer::SetBufferOffset(const uint32_t offset) noexcept {
-    const uint32_t max_offset = static_cast<uint32_t>(buffer_.size()) / channels_;
+    const uint32_t max_offset = static_cast<uint32_t>(kMaxCapacity) / channels_;
     if (offset <= max_offset) {
         index_ = offset * channels_;
     }
 }
 
 uint32_t WaveBuffer::PopSamples(const uint32_t size, const bool reset_idx) noexcept {
-    if (buffer_.empty()) return 0;
+    if (index_ == 0) return 0;
 
     if (const uint32_t needed = channels_ * size; needed <= index_) {
         index_ -= needed;
@@ -49,7 +49,7 @@ uint32_t WaveBuffer::PopSamples(const uint32_t size, const bool reset_idx) noexc
 }
 
 uint32_t WaveBuffer::PopSamples(float *dest, const uint32_t size, const bool reset_idx) noexcept {
-    if (buffer_.empty() || dest == nullptr) return 0;
+    if (dest == nullptr) return 0;
 
     if (const uint32_t needed = channels_ * size; needed <= index_) {
         std::copy_n(buffer_.data(), needed, dest);
@@ -71,8 +71,8 @@ uint32_t WaveBuffer::PopSamples(float *dest, const uint32_t size, const bool res
 bool WaveBuffer::PushSamples(const float *source, const uint32_t size) {
     if (source == nullptr) return false;
     if (size > 0) {
-        if (const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
-            required > buffer_.size()) buffer_.resize(required);
+        const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
+        if (required > kMaxCapacity) return false;
         std::copy_n(source, channels_ * size, buffer_.data() + index_);
         index_ += channels_ * size;
     }
@@ -81,8 +81,8 @@ bool WaveBuffer::PushSamples(const float *source, const uint32_t size) {
 
 bool WaveBuffer::PushZeros(const uint32_t size) {
     if (size > 0) {
-        if (const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
-            required > buffer_.size()) buffer_.resize(required);
+        const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
+        if (required > kMaxCapacity) { return true; }
         std::fill_n(buffer_.data() + index_, channels_ * size, 0.0f);
         index_ += channels_ * size;
     }
@@ -92,8 +92,8 @@ bool WaveBuffer::PushZeros(const uint32_t size) {
 float *WaveBuffer::PushZerosGetBuffer(const uint32_t size) {
     const uint32_t old_idx = index_;
     if (size > 0) {
-        if (const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
-            required > buffer_.size()) buffer_.resize(required);
+        const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
+        if (required > kMaxCapacity) { return buffer_.data() + old_idx; }
         std::fill_n(buffer_.data() + index_, channels_ * size, 0.0f);
         index_ += channels_ * size;
     }

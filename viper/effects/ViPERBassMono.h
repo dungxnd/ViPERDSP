@@ -4,6 +4,7 @@
 #include "../utils/Biquad.h"
 #include "../utils/Polyphase.h"
 #include "../utils/Subwoofer.h"
+#include <array>
 #include <cstdint>
 #include <mdspan>
 #include <span>
@@ -17,10 +18,10 @@ public:
 
     ViPERBassMono();
 
-    // samples: interleaved stereo, size = frame count (not sample count).
-    void Process(std::span<float> samples) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetProcessMode(ProcessMode mode) noexcept;
     void SetBassFactor(float value) noexcept;
@@ -29,6 +30,9 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    // samples: interleaved stereo, size = frame count (not sample count).
+    void Process(std::span<float> samples) noexcept;
+
     bool enable_{false};
 
     ProcessMode process_mode_{ProcessMode::NaturalBass};
@@ -61,12 +65,14 @@ private:
     std::array<float, kDelayCapacity * 2u> bass_delay_{};
     size_t delay_write_idx_{0u};
 
-    // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend and
-    // ProcessPureBassPlus FIR pass.  Sized in ctor / SetSamplingRate().
+    // Pre-allocated scratch buffer.
+    // PureBassPlus planar layout: [fir_l(f), fir_r(f), dry_l(f), dry_r(f)] = 4*frames.
+    // Subwoofer anti-pop interleaved staging:            [sc(2*f)]          = 2*frames.
+    // Sized to 4096*4 in ctor / SetSamplingRate().
     std::vector<float> scratch_buffer_;
 
     void ShapeMix(float bass, float& left, float& right) noexcept;
-    void ProcessNaturalBass (StereoView audio) noexcept;
-    void ProcessPureBassPlus(StereoView audio) noexcept;
+    void ProcessNaturalBass (float* L, float* R, size_t frames) noexcept;
+    void ProcessPureBassPlus(float* L, float* R, size_t frames) noexcept;
     void ProcessSubwoofer   (std::span<float> samples, StereoView audio) noexcept;
 };

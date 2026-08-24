@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/Biquad.h"
 #include "../utils/MultiBiquad.h"
 #include <array>
@@ -9,9 +12,11 @@ class SpeakerCorrection {
 public:
     SpeakerCorrection();
 
-    void Process(float *samples, uint32_t size) noexcept;
+    // True planar in-place — no interleave/deinterleave, no scratch buffer.
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetHighPassCutoff(uint32_t value) noexcept;
     void SetLowPassCutoff(uint32_t value) noexcept;

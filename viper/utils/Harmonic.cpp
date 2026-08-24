@@ -35,18 +35,11 @@ double Harmonic::Process(const double sample) noexcept {
 
     last_processed_ = y;
     prev_out_ = last_processed_ + prev_out_ * kPrevOutDecay - prev_last;
-
-    if (sample_counter_ < biggest_coeff_) {
-        ++sample_counter_;
-        return 0.0;
-    }
-
     return prev_out_;
 }
 
 void Harmonic::Reset() noexcept {
     last_processed_ = 0.0;
-    sample_counter_ = 0;
     prev_out_       = 0.0;
 }
 
@@ -59,16 +52,10 @@ void Harmonic::UpdateCoeffs(const std::span<const float, 10> coeffs) {
     std::array<float, 11> arr1{};
     std::array<float, 11> arr2{};
 
-    float biggest_coeff = 0.0f;
     float abs_coeff_sum = 0.0f;
     for (uint32_t i = 0; i < 10; i++) {
-        const float abs_coeff = std::abs(coeffs[i]);
-        abs_coeff_sum += abs_coeff;
-        if (abs_coeff > biggest_coeff) {
-            biggest_coeff = abs_coeff;
-        }
+        abs_coeff_sum += std::abs(coeffs[i]);
     }
-    biggest_coeff_ = static_cast<uint32_t>(biggest_coeff * 10000.0f);
 
     std::ranges::copy(coeffs, arr1.begin() + 1);
 

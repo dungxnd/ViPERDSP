@@ -105,6 +105,32 @@ uint32_t Convolver::Process(
     return frame_size;
 }
 
+void Convolver::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    // Kernel swap check is handled in the interleaved Process(); mirror it here.
+    ConsumeKernelSwap();
+
+    if (!enable_ || !kernel_ch1_->InstanceUsable() || !kernel_ch2_->InstanceUsable()
+        || L.empty()) {
+        return;  // pass-through: planar buffers already contain the input
+    }
+    const auto frame_size = static_cast<uint32_t>(L.size());
+
+    // Direct contiguous convolution — no interleave/deinterleave overhead.
+    kernel_ch1_->Process(L.data(), L.data(), frame_size);
+    kernel_ch2_->Process(R.data(), R.data(), frame_size);
+
+    if (is_valid_cross_channel_) {
+        // Planar cross-channel blend: blend = lerp(L, R, cc) and vice-versa.
+        const float cc = cross_channel_;
+        for (uint32_t i = 0; i < frame_size; ++i) {
+            const float l = L[i];
+            const float r = R[i];
+            L[i] = l + (r - l) * cc;
+            R[i] = r + (l - r) * cc;
+        }
+    }
+}
+
 void Convolver::Reset() {
     if (kernel_ch1_) kernel_ch1_->Reset();
     if (kernel_ch2_) kernel_ch2_->Reset();
@@ -279,7 +305,7 @@ void Convolver::SetKernelBuffer(const float* const buf, uint32_t size) {
 void Convolver::CommitKernelBuffer(
     const uint32_t expected_size, const uint32_t expected_crc, const uint32_t kernel_id
 ) {
-    if (kernel_buffer_.empty() || expected_size_ != expected_size || current_size_ == 0) {
+    if (kernel_buffer_.empty() || expected_size_ != expected_size || current_size_ != expected_size_) {
         ClearKernelBuffer();
         return;
     }

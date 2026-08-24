@@ -43,3 +43,9 @@ void ColorfulMusic::SetSamplingRate(const uint32_t sampling_rate) {
         depth_surround_.SetSamplingRate(sampling_rate_);
     }
 }
+
+void ColorfulMusic::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+    depth_surround_.ProcessPlanar(L.data(), R.data(), L.size());
+    stereo_3d_surround_.ProcessPlanar(L.data(), R.data(), L.size());
+}

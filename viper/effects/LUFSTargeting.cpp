@@ -55,16 +55,16 @@ LUFSTargeting::LUFSTargeting() {
 void LUFSTargeting::UpdateWindow() noexcept {
     if (window_sample_count_ < window_size_) return;
 
-    if (const float mean_square = window_accumulator_ / static_cast<float>(window_sample_count_);
-        mean_square > kGateThreshold) {
-        // O(1) running sum: remove the value about to be overwritten, add new
-        running_power_sum_ -= window_power_[window_write_idx_];
-        window_power_[window_write_idx_] = mean_square;
-        running_power_sum_ += mean_square;
-
-        window_write_idx_ = (window_write_idx_ + 1u) % kMaxWindows;
-        if (window_count_ < kMaxWindows) ++window_count_;
-    }
+    const float mean_square = window_accumulator_ / static_cast<float>(window_sample_count_);
+    // Per ITU-R BS.1770-4: always advance the ring so silent blocks evict old power.
+    // Sub-threshold slots store 0 rather than skipping the write entirely.
+    const float stored_power = (mean_square > kGateThreshold) ? mean_square : 0.0f;
+    // O(1) running sum: remove the value about to be overwritten, add new
+    running_power_sum_ -= window_power_[window_write_idx_];
+    window_power_[window_write_idx_] = stored_power;
+    running_power_sum_ += stored_power;
+    window_write_idx_ = (window_write_idx_ + 1u) % kMaxWindows;
+    if (window_count_ < kMaxWindows) ++window_count_;
 
     const auto shift_samples = static_cast<float>(window_size_ - step_size_);
     window_accumulator_  *= shift_samples / static_cast<float>(window_sample_count_);
@@ -196,3 +196,48 @@ void LUFSTargeting::ConfigureFilters() noexcept {
     stage2_.a1 = kw.stage2.a1; stage2_.a2 = kw.stage2.a2;
 }
 
+
+void LUFSTargeting::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+    const size_t frames = L.size();
+
+    for (size_t i = 0u; i < frames; ++i) {
+        float k_l;
+        float k_r;
+        stage1_.Process(L[i], R[i], k_l, k_r);
+        stage2_.Process(k_l, k_r, k_l, k_r);
+
+        window_accumulator_ += k_l * k_l + k_r * k_r;
+        ++window_sample_count_;
+
+        if (++sample_counter_ >= step_size_) [[unlikely]] {
+            sample_counter_ = 0u;
+            UpdateWindow();
+        }
+    }
+
+    const float desired_gain_db = std::clamp(
+        target_lufs_ - cached_lufs_,
+        -max_gain_db_,
+        max_gain_db_
+    );
+
+    const auto [attack_ms, release_ms] = kSpeedTable[static_cast<size_t>(speed_)];
+    const float tau_sec = (desired_gain_db > current_gain_db_ ? attack_ms : release_ms) * 0.001f;
+    const float block_dt = static_cast<float>(frames) / static_cast<float>(sampling_rate_);
+    const float block_coeff = 1.0f - std::exp(-block_dt / tau_sec);
+    current_gain_db_ += block_coeff * (desired_gain_db - current_gain_db_);
+
+    const float target_gain_linear = viper::dsp::FastDbToLinear(current_gain_db_);
+    const float gain_start = current_gain_linear_;
+    const float gain_step  = (target_gain_linear - gain_start) / static_cast<float>(frames);
+
+    float g = gain_start;
+#pragma clang loop vectorize(enable)
+    for (size_t i = 0u; i < frames; ++i) {
+        g += gain_step;
+        L[i] *= g;
+        R[i] *= g;
+    }
+    current_gain_linear_ = target_gain_linear;
+}

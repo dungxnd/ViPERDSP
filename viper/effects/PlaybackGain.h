@@ -1,6 +1,10 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/Biquad.h"
+#include <array>
 #include <cstdint>
 #include <numbers>
 
@@ -8,9 +12,10 @@ class PlaybackGain {
 public:
     PlaybackGain();
 
-    void Process(float* samples, uint32_t size) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetMaxGainFactor(float max_gain_factor) noexcept;
     void SetRatio(float ratio) noexcept;
@@ -39,5 +44,4 @@ private:
     Biquad biquad1_;
     Biquad biquad2_;
 
-    [[nodiscard]] double AnalyseWave(const float* samples, uint32_t size) noexcept;
 };

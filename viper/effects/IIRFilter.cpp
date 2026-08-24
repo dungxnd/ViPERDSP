@@ -132,3 +132,61 @@ void IIRFilter::UpdateCoeffConstants() noexcept {
     gain_smooth_coeff_ = 1.0f - std::exp(-1.0f / (0.020f * sr_f));
     fade_in_step_      = 1.0f / (0.010f * sr_f);
 }
+
+void IIRFilter::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || bands_ == 0 || L.empty()) return;
+    const auto coeffs = min_phase_iir_coeffs_.GetCoefficients();
+    if (coeffs.empty()) return;
+
+    for (size_t f = 0; f < L.size(); ++f) {
+        if (gains_dirty_) [[unlikely]] {
+            bool still_moving = false;
+            for (uint32_t k = 0; k < bands_; ++k) {
+                const float diff = target_gains_[k] - current_gains_[k];
+                if (std::abs(diff) > 1e-5f) {
+                    current_gains_[k] += diff * gain_smooth_coeff_;
+                    still_moving = true;
+                } else {
+                    current_gains_[k] = target_gains_[k];
+                }
+            }
+            gains_dirty_ = still_moving;
+        }
+
+        {
+            const float in = L[f];
+            float accumulated = 0.0f;
+            for (uint32_t k = 0; k < bands_; ++k) {
+                const auto& c  = coeffs[k];
+                auto&       st = state_[0][k];
+                const float y  = c.b0 * in + st.s1;
+                st.s1 = -c.a1 * y + st.s2;
+                st.s2 = -c.b0 * in - c.a2 * y;
+                accumulated += y * current_gains_[k];
+            }
+            if (std::isfinite(accumulated)) [[likely]] {
+                L[f] = (fade_in_gain_ < 1.0f) ? std::lerp(in, accumulated, fade_in_gain_) : accumulated;
+            }
+        }
+
+        {
+            const float in = R[f];
+            float accumulated = 0.0f;
+            for (uint32_t k = 0; k < bands_; ++k) {
+                const auto& c  = coeffs[k];
+                auto&       st = state_[1][k];
+                const float y  = c.b0 * in + st.s1;
+                st.s1 = -c.a1 * y + st.s2;
+                st.s2 = -c.b0 * in - c.a2 * y;
+                accumulated += y * current_gains_[k];
+            }
+            if (std::isfinite(accumulated)) [[likely]] {
+                R[f] = (fade_in_gain_ < 1.0f) ? std::lerp(in, accumulated, fade_in_gain_) : accumulated;
+            }
+        }
+
+        if (fade_in_gain_ < 1.0f) [[unlikely]] {
+            fade_in_gain_ = std::min(fade_in_gain_ + fade_in_step_, 1.0f);
+        }
+    }
+}

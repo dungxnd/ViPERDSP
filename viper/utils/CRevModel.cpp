@@ -1,52 +1,66 @@
 #include "CRevModel.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <numeric>
 
-namespace {
-
-// Freeverb buffer sizes (samples at 44.1 kHz): 8 comb pairs + 4 allpass pairs.
-// Layout: [comb_l0, comb_r0, ..., comb_l7, comb_r7, ap_l0, ap_r0, ..., ap_l3, ap_r3]
-constexpr std::array<uint32_t, 24> kBufferSizes = {
-    1116, 1139, 1188, 1211, 1277, 1300, 1356, 1379,
-    1422, 1445, 1491, 1514, 1557, 1580, 1617, 1640,
-     556,  579,  441,  464,  341,  364,  225,  248,
-};
-
-} // anonymous namespace
-
 CRevModel::CRevModel() {
-    // Allocate single contiguous pool for all delay lines.
-    const uint32_t total = std::accumulate(kBufferSizes.begin(), kBufferSizes.end(), 0u);
-    buffer_pool_ = std::make_unique<float[]>(total);
-
-    // Slice pool into per-filter views.
-    uint32_t offset = 0;
-    for (uint32_t i = 0; i < 24; ++i) {
-        buffers_[i] = buffer_pool_.get() + offset;
-        offset     += kBufferSizes[i];
-    }
-
-    // Wire comb filters (interleaved L/R: index 2i = left, 2i+1 = right).
-    for (uint32_t i = 0; i < kNumCombs; ++i) {
-        comb_l_[i].SetBuffer(buffers_[i * 2],     kBufferSizes[i * 2]);
-        comb_r_[i].SetBuffer(buffers_[i * 2 + 1], kBufferSizes[i * 2 + 1]);
-    }
-
-    // Wire allpass filters (start after 16 comb entries).
-    constexpr uint32_t kApOffset = kNumCombs * 2;
-    for (uint32_t i = 0; i < kNumAllPass; ++i) {
-        allpass_l_[i].SetBuffer(buffers_[kApOffset + i * 2],     kBufferSizes[kApOffset + i * 2]);
-        allpass_r_[i].SetBuffer(buffers_[kApOffset + i * 2 + 1], kBufferSizes[kApOffset + i * 2 + 1]);
-        allpass_l_[i].SetFeedback(0.5f);
-        allpass_r_[i].SetFeedback(0.5f);
-    }
+    // buffer_sizes_ already initialised to kBufferSizes44k via in-class default.
+    ReallocateBuffers(1.0f);
 
     SetWet(0.167f);
     SetRoomSize(0.5f);
     SetDry(0.25f);
     SetDamp(0.5f);
     SetWidth(1.0f);
+    Reset();
+}
+
+// ---------------------------------------------------------------------------
+// ReallocateBuffers — rebuild the pool and re-wire all filter views.
+// sr_scale = sampling_rate / 44100.  Called from ctor (scale=1) and
+// SetSamplingRate.  Preserves parameter values; resets delay-line content.
+// ---------------------------------------------------------------------------
+void CRevModel::ReallocateBuffers(const float sr_scale) noexcept {
+    for (uint32_t i = 0; i < 24u; ++i) {
+        const auto sz = static_cast<uint32_t>(
+            std::round(static_cast<float>(kBufferSizes44k[i]) * sr_scale));
+        buffer_sizes_[i] = std::max(sz, 1u);
+    }
+
+    const uint32_t total =
+        std::accumulate(buffer_sizes_.begin(), buffer_sizes_.end(), 0u);
+    buffer_pool_ = std::make_unique<float[]>(total);
+
+    // Slice pool into per-filter views.
+    uint32_t offset = 0;
+    for (uint32_t i = 0; i < 24u; ++i) {
+        buffers_[i] = buffer_pool_.get() + offset;
+        offset     += buffer_sizes_[i];
+    }
+
+    // Wire comb filters (interleaved L/R: index 2i = left, 2i+1 = right).
+    for (uint32_t i = 0; i < kNumCombs; ++i) {
+        comb_l_[i].SetBuffer(buffers_[i * 2u],     buffer_sizes_[i * 2u]);
+        comb_r_[i].SetBuffer(buffers_[i * 2u + 1u], buffer_sizes_[i * 2u + 1u]);
+    }
+
+    // Wire allpass filters (start after 16 comb entries).
+    constexpr uint32_t kApOffset = kNumCombs * 2u;
+    for (uint32_t i = 0; i < kNumAllPass; ++i) {
+        allpass_l_[i].SetBuffer(buffers_[kApOffset + i * 2u],     buffer_sizes_[kApOffset + i * 2u]);
+        allpass_r_[i].SetBuffer(buffers_[kApOffset + i * 2u + 1u], buffer_sizes_[kApOffset + i * 2u + 1u]);
+        allpass_l_[i].SetFeedback(0.5f);
+        allpass_r_[i].SetFeedback(0.5f);
+    }
+}
+
+void CRevModel::SetSamplingRate(const uint32_t sampling_rate) noexcept {
+    if (sampling_rate == 0u) return;
+    const float sr_scale = static_cast<float>(sampling_rate) / 44100.0f;
+    ReallocateBuffers(sr_scale);
+    // Re-apply coefficients to the newly allocated filters.
+    UpdateCoeffs();
     Reset();
 }
 
@@ -69,6 +83,28 @@ void CRevModel::ProcessReplace(
 
         buf_l[idx] = out_l * wet1_ + out_r * wet2_ + buf_l[idx] * dry_;
         buf_r[idx] = out_r * wet1_ + out_l * wet2_ + buf_r[idx] * dry_;
+    }
+}
+
+void CRevModel::ProcessPlanar(
+    float* __restrict L, float* __restrict R, const uint32_t frames
+) noexcept {
+    for (uint32_t f = 0; f < frames; ++f) {
+        float out_l = 0.0f;
+        float out_r = 0.0f;
+        const float input = (L[f] + R[f]) * gain_;
+
+        for (uint32_t i = 0; i < kNumCombs; ++i) {
+            out_l += comb_l_[i].Process(input);
+            out_r += comb_r_[i].Process(input);
+        }
+        for (uint32_t i = 0; i < kNumAllPass; ++i) {
+            out_l = allpass_l_[i].Process(out_l);
+            out_r = allpass_r_[i].Process(out_r);
+        }
+
+        L[f] = out_l * wet1_ + out_r * wet2_ + L[f] * dry_;
+        R[f] = out_r * wet1_ + out_l * wet2_ + R[f] * dry_;
     }
 }
 

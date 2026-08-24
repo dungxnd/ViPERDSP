@@ -13,6 +13,7 @@ public:
     Crossfeed();
 
     void ProcessFrames(float *buffer, uint32_t size) noexcept;
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
     [[nodiscard]] uint32_t GetCutoff() const noexcept;

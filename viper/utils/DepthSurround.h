@@ -10,6 +10,7 @@ public:
     DepthSurround() noexcept;
 
     void Process(float* samples, uint32_t size) noexcept;
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
 
     void SetStrength(uint32_t value) noexcept;
     void SetSamplingRate(uint32_t sampling_rate) noexcept;

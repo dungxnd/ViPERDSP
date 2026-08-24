@@ -1,12 +1,4 @@
 #include "Cure.h"
-#include <array>
-
-void Cure::Process(float *buffer, const uint32_t size) noexcept {
-    if (!enabled_) return;
-
-    crossfeed_.ProcessFrames(buffer, size);
-    pass_filter_.ProcessFrames(buffer, size);
-}
 
 void Cure::Reset() noexcept {
     crossfeed_.Reset();
@@ -58,4 +50,10 @@ void Cure::SetPreset(const uint32_t value) noexcept {
 void Cure::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     crossfeed_.SetSamplingRate(sampling_rate);
     pass_filter_.SetSamplingRate(sampling_rate);
+}
+
+void Cure::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+    crossfeed_.ProcessPlanar(L.data(), R.data(), L.size());
+    pass_filter_.ProcessPlanar(L.data(), R.data(), L.size());
 }

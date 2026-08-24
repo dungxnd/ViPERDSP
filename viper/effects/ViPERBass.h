@@ -18,10 +18,10 @@ public:
 
     ViPERBass();
 
-    // samples: interleaved stereo, size = frame count (not sample count).
-    void Process(std::span<float> samples) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetProcessMode(ProcessMode mode) noexcept;
     void SetBassFactor(float value) noexcept;
@@ -30,6 +30,9 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    // samples: interleaved stereo, size = frame count (not sample count).
+    void Process(std::span<float> samples) noexcept;
+
     bool        enable_{false};
     ProcessMode process_mode_{ProcessMode::NaturalBass};
 
@@ -66,7 +69,7 @@ private:
 
     void ShapeMix(float& left, float& right, float bass_l, float bass_r) noexcept;
     void ApplyAntiPop(float& bass_l, float& bass_r) noexcept;
-    void ProcessNaturalBass (StereoView audio) noexcept;
-    void ProcessPureBassPlus(StereoView audio) noexcept;
+    void ProcessNaturalBass (float* L, float* R, size_t frames) noexcept;
+    void ProcessPureBassPlus(float* L, float* R, size_t frames) noexcept;
     void ProcessSubwoofer   (std::span<float> samples, StereoView audio) noexcept;
 };

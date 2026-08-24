@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/PConvZeroLatency.h"
 #include <cstdint>
 
@@ -12,6 +15,11 @@ public:
     VHE();
 
     uint32_t Process(const float *source, float *dest, uint32_t frame_size);
+
+    // Planar processing: L and R are separate contiguous arrays.
+    // Eliminates the ProcessInterleaved stride overhead.
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
+    [[nodiscard]] bool IsEnabled() const noexcept { return GetEnable(); }
 
     // Reloads HRIR kernels for the current (effect_level_, sampling_rate_) pair;
     // called automatically by SetEnable/SetEffectLevel/SetSamplingRate on change.

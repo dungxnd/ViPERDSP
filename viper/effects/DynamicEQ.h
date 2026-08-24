@@ -16,8 +16,10 @@ public:
     void Process(float* samples, uint32_t size) noexcept {
         if (samples) Process(std::span<float>(samples, size * 2u));
     }
-
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
+
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
 
     void SetEnable(bool enable) noexcept;
     void SetBandCount(uint32_t count) noexcept;
@@ -100,4 +102,5 @@ private:
     void UpdateSubBlockGain(const BandParam& p, BandState& st) noexcept;
     void ApplyBiquadBlock(StereoView& audio, size_t frame_offset,
                           size_t chunk, uint32_t band) noexcept;
+
 };

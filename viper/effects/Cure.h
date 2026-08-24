@@ -1,14 +1,20 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/Crossfeed.h"
 #include "../utils/PassFilter.h"
+#include <array>
 
 class Cure {
 public:
     Cure() = default;
 
-    void Process(float *buffer, uint32_t size) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
+
+    [[nodiscard]] bool IsEnabled() const noexcept { return enabled_; }
 
     [[nodiscard]] uint32_t GetCutoff() const noexcept;
     [[nodiscard]] float GetFeedback() const noexcept;

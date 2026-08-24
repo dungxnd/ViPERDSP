@@ -1,11 +1,12 @@
 #pragma once
 
-#include "../utils/MultiBiquad.h"
+#include <span>
+
+
+#include "../dsp/LinkwitzRileyCrossover.h"
 #include "FETCompressor.h"
 #include <array>
 #include <cstdint>
-#include <vector>
-
 class MultibandCompressor {
 public:
     static constexpr uint32_t kMaxBands      = 5;
@@ -13,9 +14,10 @@ public:
 
     MultibandCompressor();
 
-    void Process(float* samples, uint32_t size) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetBandCount(uint32_t count);
     void SetCrossoverFrequency(uint32_t index, float frequency) noexcept;
@@ -46,17 +48,13 @@ private:
 
     std::array<float, kMaxCrossovers>       crossover_freqs_{200.0f, 4000.0f, 0.0f, 0.0f};
 
-    std::array<MultiBiquad, kMaxCrossovers> lowpass_la_;
-    std::array<MultiBiquad, kMaxCrossovers> lowpass_lb_;
-    std::array<MultiBiquad, kMaxCrossovers> lowpass_ra_;
-    std::array<MultiBiquad, kMaxCrossovers> lowpass_rb_;
-    std::array<MultiBiquad, kMaxCrossovers> highpass_la_;
-    std::array<MultiBiquad, kMaxCrossovers> highpass_lb_;
-    std::array<MultiBiquad, kMaxCrossovers> highpass_ra_;
-    std::array<MultiBiquad, kMaxCrossovers> highpass_rb_;
+    viper::dsp::LinkwitzRileyCrossover<kMaxBands> crossover_;
 
     std::array<FETCompressor, kMaxBands>          compressors_;
-    std::array<std::vector<float>, kMaxBands>     band_buffers_;
+    static constexpr uint32_t kMaxFrames = 4096u;
+    // Planar per-band scratch — used by ProcessPlanar(); no interleaved band_buffers_ needed.
+    alignas(64) std::array<float, kMaxFrames> band_scratch_l_{};
+    alignas(64) std::array<float, kMaxFrames> band_scratch_r_{};
 
     void ConfigureCrossovers() noexcept;
 };

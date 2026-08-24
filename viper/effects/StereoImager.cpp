@@ -1,85 +1,44 @@
 #include "StereoImager.h"
 #include <array>
 
-static constexpr float kButterworthQ = 0.7071f;
-
 StereoImager::StereoImager() {
     ConfigureCrossovers();
 }
 
 void StereoImager::Process(float *samples, const uint32_t size) noexcept {
     if (!enable_ || size == 0) return;
+    if (size > kMaxFrames) return;
 
-    const uint32_t frame_count = size * 2;
-
-    for (auto& buf : band_buffers_) {
-        if (buf.size() < frame_count) buf.resize(frame_count);
-    }
-
-    for (uint32_t b = 0; b < kNumBands; b++) {
-        for (uint32_t i = 0; i < frame_count; i += 2) {
-            double sample_l = samples[i];
-            double sample_r = samples[i + 1];
-
-            if (b == 0) {
-                sample_l = lowpass_la_[0].ProcessSample(sample_l);
-                sample_l = lowpass_lb_[0].ProcessSample(sample_l);
-                sample_r = lowpass_ra_[0].ProcessSample(sample_r);
-                sample_r = lowpass_rb_[0].ProcessSample(sample_r);
-            } else if (b == 2) {
-                sample_l = highpass_la_[1].ProcessSample(sample_l);
-                sample_l = highpass_lb_[1].ProcessSample(sample_l);
-                sample_r = highpass_ra_[1].ProcessSample(sample_r);
-                sample_r = highpass_rb_[1].ProcessSample(sample_r);
-            } else {
-                sample_l = highpass_la_[0].ProcessSample(sample_l);
-                sample_l = highpass_lb_[0].ProcessSample(sample_l);
-                sample_l = lowpass_la_[1].ProcessSample(sample_l);
-                sample_l = lowpass_lb_[1].ProcessSample(sample_l);
-                sample_r = highpass_ra_[0].ProcessSample(sample_r);
-                sample_r = highpass_rb_[0].ProcessSample(sample_r);
-                sample_r = lowpass_ra_[1].ProcessSample(sample_r);
-                sample_r = lowpass_rb_[1].ProcessSample(sample_r);
+    for (uint32_t b = 0; b < kNumBands; ++b) {
+        // Deinterleave input into planar scratch
+        for (uint32_t f = 0; f < size; ++f) {
+            scratch_l_[f] = samples[f * 2u];
+            scratch_r_[f] = samples[f * 2u + 1u];
+        }
+        // Block crossover filter for band b (in-place on scratch)
+        crossover_.ProcessBand(b, kNumBands, scratch_l_.data(), scratch_r_.data(), size);
+        // Apply stereo width; accumulate directly into output — no band_buffers_
+        const float w = band_widths_[b];
+        if (b == 0u) {
+            for (uint32_t f = 0; f < size; ++f) {
+                const float mid  = (scratch_l_[f] + scratch_r_[f]) * 0.5f;
+                const float side = (scratch_l_[f] - scratch_r_[f]) * 0.5f * w;
+                samples[f * 2u]      = mid + side;
+                samples[f * 2u + 1u] = mid - side;
             }
-
-            const auto f_l = static_cast<float>(sample_l);
-            const auto f_r = static_cast<float>(sample_r);
-
-            const float mid  = (f_l + f_r) * 0.5f;
-            const float side = (f_l - f_r) * 0.5f * band_widths_[b];
-
-            band_buffers_[b][i]     = mid + side;
-            band_buffers_[b][i + 1] = mid - side;
+        } else {
+            for (uint32_t f = 0; f < size; ++f) {
+                const float mid  = (scratch_l_[f] + scratch_r_[f]) * 0.5f;
+                const float side = (scratch_l_[f] - scratch_r_[f]) * 0.5f * w;
+                samples[f * 2u]      += mid + side;
+                samples[f * 2u + 1u] += mid - side;
+            }
         }
-    }
-
-    for (uint32_t i = 0; i < frame_count; i += 2) {
-        float sum_l = 0.0f;
-        float sum_r = 0.0f;
-        for (uint32_t b = 0; b < kNumBands; b++) {
-            sum_l += band_buffers_[b][i];
-            sum_r += band_buffers_[b][i + 1];
-        }
-        samples[i]     = sum_l;
-        samples[i + 1] = sum_r;
     }
 }
 
 void StereoImager::Reset() noexcept {
-    // Collect all filter banks for a single reset sweep
-    std::array<MultiBiquad*, kNumCrossovers * 8> all_filters;
-    for (uint32_t i = 0; i < kNumCrossovers; i++) {
-        all_filters[i * 8 + 0] = &lowpass_la_[i];
-        all_filters[i * 8 + 1] = &lowpass_lb_[i];
-        all_filters[i * 8 + 2] = &lowpass_ra_[i];
-        all_filters[i * 8 + 3] = &lowpass_rb_[i];
-        all_filters[i * 8 + 4] = &highpass_la_[i];
-        all_filters[i * 8 + 5] = &highpass_lb_[i];
-        all_filters[i * 8 + 6] = &highpass_ra_[i];
-        all_filters[i * 8 + 7] = &highpass_rb_[i];
-    }
-    for (auto* f : all_filters) f->Reset();
-
+    crossover_.Reset();
     ConfigureCrossovers();
 }
 
@@ -124,23 +83,40 @@ void StereoImager::SetSamplingRate(const uint32_t sampling_rate) noexcept {
 }
 
 void StereoImager::ConfigureCrossovers() noexcept {
-    // Per crossover index: LP and HP banks for both channels, both cascade stages
-    using BankPair = std::array<MultiBiquad*, 4>;
-    for (uint32_t i = 0; i < kNumCrossovers; i++) {
-        const float freq = crossover_freqs_[i];
+    crossover_.Configure(crossover_freqs_.data(), kNumCrossovers, sampling_rate_);
+}
 
-        const BankPair lp_banks{&lowpass_la_[i],  &lowpass_lb_[i],
-                                &lowpass_ra_[i],  &lowpass_rb_[i]};
-        for (auto* f : lp_banks) {
-            f->RefreshFilter(MultiBiquad::LOW_PASS, 1.0f, freq,
-                             sampling_rate_, kButterworthQ, false);
+void StereoImager::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+    if (L.size() > kMaxFrames) return;
+
+    const auto size = static_cast<uint32_t>(L.size());
+
+    for (uint32_t b = 0u; b < kNumBands; ++b) {
+        // Copy L/R into planar scratch — crossover filters the scratch in-place
+        for (uint32_t f = 0u; f < size; ++f) {
+            scratch_l_[f] = L[f];
+            scratch_r_[f] = R[f];
         }
-
-        const BankPair hp_banks{&highpass_la_[i], &highpass_lb_[i],
-                                &highpass_ra_[i], &highpass_rb_[i]};
-        for (auto* f : hp_banks) {
-            f->RefreshFilter(MultiBiquad::HIGH_PASS, 1.0f, freq,
-                             sampling_rate_, kButterworthQ, false);
+        crossover_.ProcessBand(b, kNumBands, scratch_l_.data(), scratch_r_.data(), size);
+        // Apply stereo width; accumulate directly into L/R — no band_buffers_
+        const float w = band_widths_[b];
+        if (b == 0u) {
+            #pragma clang loop vectorize(enable)
+            for (uint32_t f = 0u; f < size; ++f) {
+                const float mid  = (scratch_l_[f] + scratch_r_[f]) * 0.5f;
+                const float side = (scratch_l_[f] - scratch_r_[f]) * 0.5f * w;
+                L[f] = mid + side;
+                R[f] = mid - side;
+            }
+        } else {
+            #pragma clang loop vectorize(enable)
+            for (uint32_t f = 0u; f < size; ++f) {
+                const float mid  = (scratch_l_[f] + scratch_r_[f]) * 0.5f;
+                const float side = (scratch_l_[f] - scratch_r_[f]) * 0.5f * w;
+                L[f] += mid + side;
+                R[f] += mid - side;
+            }
         }
     }
 }

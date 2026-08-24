@@ -118,10 +118,12 @@ void DynamicEQ::FastUpdateBandCoeffs(const uint32_t band, const float gain_db) n
     float a0, a1, a2, b0, b1, b2;
 
     switch (p.filter_type) {
-        case 1: { // Low Shelf
+        case 1: { // Low Shelf — RBJ Q-parameterised (valid for all Q > 0)
+            // alpha = sin(w0) / (2*Q); S_term = 2*sqrt(A)*alpha
+            // This replaces the S-slope discriminant which collapses when Q > 1.
             const float sqrtA  = std::sqrt(A);
-            const float disc   = std::max((A + 1.0f / A) * (1.0f / p.q - 1.0f) + 2.0f, 0.0f);
-            const float S_term = sqrtA * 2.0f * (t.sin_w0 * 0.5f * std::sqrt(disc));
+            const float alpha  = t.sin_w0 / (2.0f * p.q);
+            const float S_term = 2.0f * sqrtA * alpha;
             a0 =  (A + 1.0f) + (A - 1.0f) * t.cos_w0 + S_term;
             a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * t.cos_w0);
             a2 =  (A + 1.0f) + (A - 1.0f) * t.cos_w0 - S_term;
@@ -130,10 +132,10 @@ void DynamicEQ::FastUpdateBandCoeffs(const uint32_t band, const float gain_db) n
             b2 =  A * ((A + 1.0f) - (A - 1.0f) * t.cos_w0 - S_term);
             break;
         }
-        case 2: { // High Shelf
+        case 2: { // High Shelf — RBJ Q-parameterised (valid for all Q > 0)
             const float sqrtA  = std::sqrt(A);
-            const float disc   = std::max((A + 1.0f / A) * (1.0f / p.q - 1.0f) + 2.0f, 0.0f);
-            const float S_term = sqrtA * 2.0f * (t.sin_w0 * 0.5f * std::sqrt(disc));
+            const float alpha  = t.sin_w0 / (2.0f * p.q);
+            const float S_term = 2.0f * sqrtA * alpha;
             a0 =  (A + 1.0f) - (A - 1.0f) * t.cos_w0 + S_term;
             a1 =  2.0f * ((A - 1.0f) - (A + 1.0f) * t.cos_w0);
             a2 =  (A + 1.0f) - (A - 1.0f) * t.cos_w0 - S_term;
@@ -282,4 +284,55 @@ void DynamicEQ::RecalcAttackRelease(const uint32_t band) noexcept {
         ? 1.0f - std::exp(-K / (att_sec * sr)) : 1.0f;
     state_[band].subblock_release_coeff = rel_sec > 0.0f
         ? 1.0f - std::exp(-K / (rel_sec * sr)) : 1.0f;
+}
+
+void DynamicEQ::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!enable_ || band_count_ == 0u || L.empty()) return;
+    const size_t frames = L.size();
+
+    for (uint32_t b = 0u; b < band_count_; ++b) {
+        const auto& p = params_[b];
+        auto&       st = state_[b];
+
+        for (size_t f = 0u; f < frames; f += kControlPeriod) {
+            const size_t chunk = std::min(static_cast<size_t>(kControlPeriod), frames - f);
+
+            for (size_t i = 0u; i < chunk; ++i) {
+                const float l   = L[f + i];
+                const float r   = R[f + i];
+                const float p_l = l * l;
+                const float p_r = r * r;
+
+                st.env_l += (p_l > st.env_l ? st.attack_coeff : st.release_coeff)
+                             * (p_l - st.env_l);
+                st.env_r += (p_r > st.env_r ? st.attack_coeff : st.release_coeff)
+                             * (p_r - st.env_r);
+            }
+
+            UpdateSubBlockGain(p, st);
+            FastUpdateBandCoeffs(b, st.current_gain_db);
+
+            const auto& fc = coeffs_[b];
+
+#pragma clang loop vectorize(disable)
+            for (size_t i = 0u; i < chunk; ++i) {
+                auto&       fs = filter_state_[0][b];
+                const float in = L[f + i];
+                const float out = fc.b0 * in + fs.s1;
+                fs.s1 = fc.b1 * in - fc.a1 * out + fs.s2;
+                fs.s2 = fc.b2 * in - fc.a2 * out;
+                L[f + i] = out;
+            }
+
+#pragma clang loop vectorize(disable)
+            for (size_t i = 0u; i < chunk; ++i) {
+                auto&       fs = filter_state_[1][b];
+                const float in = R[f + i];
+                const float out = fc.b0 * in + fs.s1;
+                fs.s1 = fc.b1 * in - fc.a1 * out + fs.s2;
+                fs.s2 = fc.b2 * in - fc.a2 * out;
+                R[f + i] = out;
+            }
+        }
+    }
 }

@@ -5,55 +5,16 @@ DiffSurround::DiffSurround() {
     Reset();
 }
 
-void DiffSurround::Process(float *samples, const uint32_t size) {
-    if (!enable_) return;
-
-    float *bufs[2];
-    bufs[0] = buffers_[0].PushZerosGetBuffer(size);
-    bufs[1] = buffers_[1].PushZerosGetBuffer(size);
-
-    for (uint32_t i = 0; i < size * 2; i++) {
-        bufs[i % 2][i / 2] = samples[i];
-    }
-
-    float *out_bufs[2];
-    out_bufs[0] = buffers_[0].GetBuffer();
-    out_bufs[1] = buffers_[1].GetBuffer();
-
-    if (wet_dry_mix_ >= 1.0f && lp_cutoff_ <= 0.0f) {
-        for (uint32_t i = 0; i < size * 2; i++) {
-            samples[i] = out_bufs[i % 2][i / 2];
-        }
-    } else {
-        const int delayed_ch = reverse_ ? 0 : 1;
-        const int direct_ch  = 1 - delayed_ch;
-        const float wet = wet_dry_mix_;
-        const float dry = 1.0f - wet;
-
-        for (uint32_t i = 0; i < size; i++) {
-            const float direct_sample = out_bufs[direct_ch][i];
-            float delayed_sample      = out_bufs[delayed_ch][i];
-
-            if (lp_cutoff_ > 0.0f) {
-                delayed_sample = static_cast<float>(lp_filter_.ProcessSample(delayed_sample));
-            }
-
-            samples[i * 2 + direct_ch]  = direct_sample;
-            samples[i * 2 + delayed_ch] = dry * direct_sample + wet * delayed_sample;
-        }
-    }
-
-    buffers_[0].PopSamples(size, false);
-    buffers_[1].PopSamples(size, false);
-}
-
 void DiffSurround::Reset() {
-    buffers_[0].Reset();
-    buffers_[1].Reset();
+    ring_[0].Reset();
+    ring_[1].Reset();
 
     const auto delay_samples =
         static_cast<uint32_t>(delay_time_ / 1000.0f * static_cast<float>(sampling_rate_));
-    buffers_[reverse_ ? 0 : 1].PushZeros(delay_samples);
+
+    // Pre-fill the delayed channel with silence equal to the requested delay.
+    const uint32_t delayed_ch = reverse_ ? 0u : 1u;
+    ring_[delayed_ch].SetDelay(delay_samples);
 
     lp_filter_.Reset();
     if (lp_cutoff_ > 0.0f) {
@@ -106,5 +67,34 @@ void DiffSurround::SetSamplingRate(const uint32_t sampling_rate) {
     if (sampling_rate_ != sampling_rate) {
         sampling_rate_ = sampling_rate;
         Reset();
+    }
+}
+
+void DiffSurround::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+
+    const uint32_t delayed_ch = reverse_ ? 0u : 1u;
+    const uint32_t direct_ch  = 1u - delayed_ch;
+    const float wet = wet_dry_mix_;
+    const float dry = 1.0f - wet;
+
+    // Use scratch for aliasing safety when L/R point into the same buffer region,
+    // but process directly in the planar domain — no interleave/deinterleave.
+    float* const ch[2] = {L.data(), R.data()};
+
+    for (size_t i = 0; i < L.size(); ++i) {
+        const float direct_in  = ch[direct_ch][i];
+        const float delayed_in = ch[delayed_ch][i];
+
+        // Both channels clock through their ring delays every sample.
+        const float direct_out  = ring_[direct_ch].Process(direct_in);
+        float       delayed_out = ring_[delayed_ch].Process(delayed_in);
+
+        if (lp_cutoff_ > 0.0f) {
+            delayed_out = static_cast<float>(lp_filter_.ProcessSample(delayed_out));
+        }
+
+        ch[direct_ch][i]  = direct_out;
+        ch[delayed_ch][i] = dry * direct_out + wet * delayed_out;
     }
 }
