@@ -22,26 +22,24 @@ void MultibandCompressor::Process(float* const samples, const uint32_t size) noe
     if (!enable_ || size == 0) return;
     if (size > kMaxFrames) return;
 
-    const uint32_t num_crossovers = band_count_ - 1;
-    const uint32_t frame_count    = size * 2;
-
     for (uint32_t b = 0; b < band_count_; ++b) {
-        for (uint32_t i = 0; i < frame_count; i += 2) {
-            double sample_l = static_cast<double>(samples[i]);
-            double sample_r = static_cast<double>(samples[i + 1]);
-
-            crossover_.ProcessSampleStereo(b, band_count_, sample_l, sample_r);
-
-            band_buffers_[b][i]     = static_cast<float>(sample_l);
-            band_buffers_[b][i + 1] = static_cast<float>(sample_r);
+        // Deinterleave input into planar scratch
+        for (uint32_t f = 0; f < size; ++f) {
+            band_scratch_l_[f] = samples[f * 2u];
+            band_scratch_r_[f] = samples[f * 2u + 1u];
         }
-
+        // Block crossover filter for band b
+        crossover_.ProcessBand(b, band_count_, band_scratch_l_.data(), band_scratch_r_.data(), size);
+        // Re-interleave into band_buffers_[b]
+        for (uint32_t f = 0; f < size; ++f) {
+            band_buffers_[b][f * 2u]      = band_scratch_l_[f];
+            band_buffers_[b][f * 2u + 1u] = band_scratch_r_[f];
+        }
         compressors_[b].Process(band_buffers_[b].data(), size);
     }
 
-    for (uint32_t i = 0; i < frame_count; i += 2) {
-        float sum_l = 0.0f;
-        float sum_r = 0.0f;
+    for (uint32_t i = 0; i < size * 2u; i += 2) {
+        float sum_l = 0.0f, sum_r = 0.0f;
         for (uint32_t b = 0; b < band_count_; ++b) {
             sum_l += band_buffers_[b][i];
             sum_r += band_buffers_[b][i + 1];

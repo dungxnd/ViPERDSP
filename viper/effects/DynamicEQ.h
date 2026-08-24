@@ -103,5 +103,4 @@ private:
     void ApplyBiquadBlock(StereoView& audio, size_t frame_offset,
                           size_t chunk, uint32_t band) noexcept;
 
-    alignas(64) std::array<float, 4096u * 2u> scratch_{};
 };

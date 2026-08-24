@@ -37,6 +37,8 @@ private:
     // Pre-allocated: eliminates RT-unsafe resize() in Process().
     static constexpr uint32_t kMaxFrames = 4096u;
     alignas(64) std::array<std::array<float, kMaxFrames * 2u>, kNumBands> band_buffers_{};
+    alignas(64) std::array<float, kMaxFrames> scratch_l_{};
+    alignas(64) std::array<float, kMaxFrames> scratch_r_{};
 
     void ConfigureCrossovers() noexcept;
 };

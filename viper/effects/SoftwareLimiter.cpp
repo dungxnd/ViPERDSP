@@ -2,9 +2,10 @@
 #include <cmath>
 #include <algorithm>
 
-static constexpr uint32_t kLookahead    = 256;
+static constexpr uint32_t kLookahead     = 256;
+static constexpr float    kAttackTauSec  = 0.005f;  // 5 ms attack (ramp down over lookahead)
 static constexpr float    kReleaseTauSec = 0.080f;  // 80 ms release time constant
-static constexpr float    kDenormFix    = 1e-25f;
+static constexpr float    kDenormFix     = 1e-25f;
 
 SoftwareLimiter::SoftwareLimiter() {
     // SetSamplingRate initialises release_coeff_ from the default 48 kHz rate,
@@ -18,16 +19,7 @@ float SoftwareLimiter::Process(float sample) noexcept {
 
     const uint32_t wi = write_index_;
 
-    const float delayed     = arr256_[wi];
-    const float window_peak = arr512_[1];
-
-    const float target_gain = window_peak > gate_ ? gate_ / window_peak : 1.0f;
-    const float released    =
-        gain_envelope_ + release_coeff_ * (1.0f - gain_envelope_) + kDenormFix;
-    float gain = std::min(target_gain, released);
-    if (gain > 1.0f) gain = 1.0f;
-    gain_envelope_ = gain;
-
+    // 1. Insert sample into segment tree FIRST so window_peak is up-to-date.
     uint32_t node = kLookahead + wi;
     arr512_[node] = std::fabs(sample);
     while (node > 1) {
@@ -36,10 +28,31 @@ float SoftwareLimiter::Process(float sample) noexcept {
         arr512_[parent] = std::max(arr512_[node], arr512_[sibling]);
         node = parent;
     }
-    arr256_[wi] = sample;
+
+    // 2. Query peak of the full lookahead window.
+    const float window_peak = arr512_[1];
+    const float target_gain = (window_peak > gate_) ? (gate_ / window_peak) : 1.0f;
+
+    // 3. Ballistic gain computer: fast attack (ramp down), slow release (exponential up).
+    if (target_gain < gain_envelope_) {
+        gain_envelope_ += attack_coeff_  * (target_gain - gain_envelope_);
+    } else {
+        gain_envelope_ += release_coeff_ * (target_gain - gain_envelope_) + kDenormFix;
+    }
+    if (gain_envelope_ > 1.0f) gain_envelope_ = 1.0f;
+
+    // 4. Read the delayed sample and advance.
+    const float delayed = arr256_[wi];
+    arr256_[wi]  = sample;
     write_index_ = (wi + 1) & (kLookahead - 1);
 
-    return delayed * gain;
+    return delayed * gain_envelope_;
+}
+
+void SoftwareLimiter::ProcessBlock(float* __restrict x, const size_t frames) noexcept {
+    for (size_t i = 0; i < frames; ++i) {
+        x[i] = Process(x[i]);
+    }
 }
 
 void SoftwareLimiter::Reset() noexcept {
@@ -62,6 +75,7 @@ void SoftwareLimiter::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     sampling_rate_ = fs;
     // One-pole coefficient for a first-order IIR with time constant τ:
     //   c = 1 − exp(−1 / (τ · fs))
-    // At 44.1 kHz: c ≈ 2.837e-4; at 48 kHz: c ≈ 2.604e-4.
-    release_coeff_ = 1.0f - std::exp(-1.0f / (kReleaseTauSec * static_cast<float>(fs)));
+    const float ffs = static_cast<float>(fs);
+    attack_coeff_  = 1.0f - std::exp(-1.0f / (kAttackTauSec  * ffs));
+    release_coeff_ = 1.0f - std::exp(-1.0f / (kReleaseTauSec * ffs));
 }

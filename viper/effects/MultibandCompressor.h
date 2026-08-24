@@ -54,6 +54,8 @@ private:
     // Fixed size eliminates the RT-unsafe std::vector::resize() in Process().
     static constexpr uint32_t kMaxFrames = 4096u;
     alignas(64) std::array<std::array<float, kMaxFrames * 2u>, kMaxBands> band_buffers_{};
+    alignas(64) std::array<float, kMaxFrames> band_scratch_l_{};
+    alignas(64) std::array<float, kMaxFrames> band_scratch_r_{};
 
     void ConfigureCrossovers() noexcept;
 };

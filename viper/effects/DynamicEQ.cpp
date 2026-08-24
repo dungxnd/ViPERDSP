@@ -285,15 +285,51 @@ void DynamicEQ::RecalcAttackRelease(const uint32_t band) noexcept {
 }
 
 void DynamicEQ::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
-    float* const sc = scratch_.data();
-    for (size_t i = 0; i < frames; ++i) {
-        sc[2u * i]      = L[i];
-        sc[2u * i + 1u] = R[i];
-    }
-    Process(std::span<float>{sc, frames * 2u});
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = sc[2u * i];
-        R[i] = sc[2u * i + 1u];
+    if (!enable_ || band_count_ == 0u || frames == 0) return;
+
+    for (uint32_t b = 0u; b < band_count_; ++b) {
+        const auto& p = params_[b];
+        auto&       st = state_[b];
+
+        for (size_t f = 0u; f < frames; f += kControlPeriod) {
+            const size_t chunk = std::min(static_cast<size_t>(kControlPeriod), frames - f);
+
+            for (size_t i = 0u; i < chunk; ++i) {
+                const float l   = L[f + i];
+                const float r   = R[f + i];
+                const float p_l = l * l;
+                const float p_r = r * r;
+
+                st.env_l += (p_l > st.env_l ? st.attack_coeff : st.release_coeff)
+                             * (p_l - st.env_l);
+                st.env_r += (p_r > st.env_r ? st.attack_coeff : st.release_coeff)
+                             * (p_r - st.env_r);
+            }
+
+            UpdateSubBlockGain(p, st);
+            FastUpdateBandCoeffs(b, st.current_gain_db);
+
+            const auto& fc = coeffs_[b];
+
+#pragma clang loop vectorize(disable)
+            for (size_t i = 0u; i < chunk; ++i) {
+                auto&       fs = filter_state_[0][b];
+                const float in = L[f + i];
+                const float out = fc.b0 * in + fs.s1;
+                fs.s1 = fc.b1 * in - fc.a1 * out + fs.s2;
+                fs.s2 = fc.b2 * in - fc.a2 * out;
+                L[f + i] = out;
+            }
+
+#pragma clang loop vectorize(disable)
+            for (size_t i = 0u; i < chunk; ++i) {
+                auto&       fs = filter_state_[1][b];
+                const float in = R[f + i];
+                const float out = fc.b0 * in + fs.s1;
+                fs.s1 = fc.b1 * in - fc.a1 * out + fs.s2;
+                fs.s2 = fc.b2 * in - fc.a2 * out;
+                R[f + i] = out;
+            }
+        }
     }
 }

@@ -1,11 +1,13 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <span>
-#include <vector>
 
 class WaveBuffer {
 public:
+    static constexpr size_t kMaxCapacity = 8192u;
+
     WaveBuffer(uint32_t channels, uint32_t length);
 
     void Reset() noexcept;
@@ -31,5 +33,5 @@ private:
     uint32_t index_{0};
     uint32_t channels_;
 
-    std::vector<float> buffer_;
+    alignas(64) std::array<float, kMaxCapacity> buffer_{};
 };

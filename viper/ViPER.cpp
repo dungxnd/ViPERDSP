@@ -203,15 +203,12 @@ void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
         planar_context_.ApplyGainPan(frame_scale_, left_pan_, right_pan_);
     }
 
-    // ── 6. Egress: single SIMD interleave back to caller's buffer ─────────
-    planar_context_.Interleave(raw_io);
+    // ── 6. True-peak limiter (planar domain: stride-1, 100% cache-local) ──
+    software_limiters_[0].ProcessBlock(L, size);
+    software_limiters_[1].ProcessBlock(R, size);
 
-    // ── 7. True-peak limiter (per-sample on interleaved output) ──────────
-    const uint32_t n2 = size * 2u;
-    for (uint32_t i = 0; i < n2; i += 2) {
-        raw_io[i]     = software_limiters_[0].Process(raw_io[i]);
-        raw_io[i + 1] = software_limiters_[1].Process(raw_io[i + 1]);
-    }
+    // ── 7. Egress: single SIMD interleave back to caller's buffer ─────────
+    planar_context_.Interleave(raw_io);
 }
 
 void ViPER::DispatchRawParam(

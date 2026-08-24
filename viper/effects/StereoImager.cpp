@@ -9,30 +9,29 @@ void StereoImager::Process(float *samples, const uint32_t size) noexcept {
     if (!enable_ || size == 0) return;
     if (size > kMaxFrames) return;
 
-    const uint32_t frame_count = size * 2;
-
-    for (uint32_t b = 0; b < kNumBands; b++) {
-        for (uint32_t i = 0; i < frame_count; i += 2) {
-            double sample_l = samples[i];
-            double sample_r = samples[i + 1];
-
-            crossover_.ProcessSampleStereo(b, kNumBands, sample_l, sample_r);
-
-            const auto f_l = static_cast<float>(sample_l);
-            const auto f_r = static_cast<float>(sample_r);
-
-            const float mid  = (f_l + f_r) * 0.5f;
-            const float side = (f_l - f_r) * 0.5f * band_widths_[b];
-
-            band_buffers_[b][i]     = mid + side;
-            band_buffers_[b][i + 1] = mid - side;
+    for (uint32_t b = 0; b < kNumBands; ++b) {
+        // Deinterleave input into planar scratch
+        for (uint32_t f = 0; f < size; ++f) {
+            scratch_l_[f] = samples[f * 2u];
+            scratch_r_[f] = samples[f * 2u + 1u];
+        }
+        // Block crossover filter for band b
+        crossover_.ProcessBand(b, kNumBands, scratch_l_.data(), scratch_r_.data(), size);
+        // Apply stereo width and re-interleave into band_buffers_[b]
+        const float w = band_widths_[b];
+        for (uint32_t f = 0; f < size; ++f) {
+            const float fl   = scratch_l_[f];
+            const float fr   = scratch_r_[f];
+            const float mid  = (fl + fr) * 0.5f;
+            const float side = (fl - fr) * 0.5f * w;
+            band_buffers_[b][f * 2u]      = mid + side;
+            band_buffers_[b][f * 2u + 1u] = mid - side;
         }
     }
 
-    for (uint32_t i = 0; i < frame_count; i += 2) {
-        float sum_l = 0.0f;
-        float sum_r = 0.0f;
-        for (uint32_t b = 0; b < kNumBands; b++) {
+    for (uint32_t i = 0; i < size * 2u; i += 2) {
+        float sum_l = 0.0f, sum_r = 0.0f;
+        for (uint32_t b = 0; b < kNumBands; ++b) {
             sum_l += band_buffers_[b][i];
             sum_r += band_buffers_[b][i + 1];
         }
@@ -94,29 +93,34 @@ void StereoImager::ProcessPlanar(float* __restrict L, float* __restrict R, const
     if (!IsEnabled() || frames == 0u) return;
     if (frames > kMaxFrames) return;
 
-    for (uint32_t b = 0u; b < kNumBands; ++b) {
-        for (size_t i = 0u; i < frames; ++i) {
-            double sl = L[i];
-            double sr = R[i];
-            crossover_.ProcessSampleStereo(b, kNumBands, sl, sr);
+    const auto size = static_cast<uint32_t>(frames);
 
-            const float fl = static_cast<float>(sl);
-            const float fr = static_cast<float>(sr);
+    for (uint32_t b = 0u; b < kNumBands; ++b) {
+        // scratch_l_/scratch_r_ already planar — copy L/R directly
+        for (uint32_t f = 0u; f < size; ++f) {
+            scratch_l_[f] = L[f];
+            scratch_r_[f] = R[f];
+        }
+        crossover_.ProcessBand(b, kNumBands, scratch_l_.data(), scratch_r_.data(), frames);
+        // Apply stereo width and store interleaved into band_buffers_[b]
+        const float w = band_widths_[b];
+        for (uint32_t f = 0u; f < size; ++f) {
+            const float fl   = scratch_l_[f];
+            const float fr   = scratch_r_[f];
             const float mid  = (fl + fr) * 0.5f;
-            const float side = (fl - fr) * 0.5f * band_widths_[b];
-            band_buffers_[b][i * 2u]      = mid + side;
-            band_buffers_[b][i * 2u + 1u] = mid - side;
+            const float side = (fl - fr) * 0.5f * w;
+            band_buffers_[b][f * 2u]      = mid + side;
+            band_buffers_[b][f * 2u + 1u] = mid - side;
         }
     }
 
-    for (size_t i = 0u; i < frames; ++i) {
-        float sum_l = 0.0f;
-        float sum_r = 0.0f;
+    for (uint32_t f = 0u; f < size; ++f) {
+        float sum_l = 0.0f, sum_r = 0.0f;
         for (uint32_t b = 0u; b < kNumBands; ++b) {
-            sum_l += band_buffers_[b][i * 2u];
-            sum_r += band_buffers_[b][i * 2u + 1u];
+            sum_l += band_buffers_[b][f * 2u];
+            sum_r += band_buffers_[b][f * 2u + 1u];
         }
-        L[i] = sum_l;
-        R[i] = sum_r;
+        L[f] = sum_l;
+        R[f] = sum_r;
     }
 }

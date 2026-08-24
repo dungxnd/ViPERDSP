@@ -72,7 +72,5 @@ private:
 
     MinPhaseIIRCoeffs min_phase_iir_coeffs_;
 
-    alignas(64) std::array<float, 4096u * 2u> scratch_{};
-
     void UpdateCoeffConstants() noexcept;  // updates gain_smooth_coeff_ + fade_in_step_
 };

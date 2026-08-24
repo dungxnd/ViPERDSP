@@ -199,14 +199,44 @@ void LUFSTargeting::ConfigureFilters() noexcept {
 
 void LUFSTargeting::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
     if (!IsEnabled() || frames == 0) return;
-    float* const sc = scratch_.data();
-    for (size_t i = 0; i < frames; ++i) {
-        sc[2u * i]      = L[i];
-        sc[2u * i + 1u] = R[i];
+
+    for (size_t i = 0u; i < frames; ++i) {
+        float k_l;
+        float k_r;
+        stage1_.Process(L[i], R[i], k_l, k_r);
+        stage2_.Process(k_l, k_r, k_l, k_r);
+
+        window_accumulator_ += k_l * k_l + k_r * k_r;
+        ++window_sample_count_;
+
+        if (++sample_counter_ >= step_size_) [[unlikely]] {
+            sample_counter_ = 0u;
+            UpdateWindow();
+        }
     }
-    Process(std::span<float>{sc, frames * 2u});
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = sc[2u * i];
-        R[i] = sc[2u * i + 1u];
+
+    const float desired_gain_db = std::clamp(
+        target_lufs_ - cached_lufs_,
+        -max_gain_db_,
+        max_gain_db_
+    );
+
+    const auto [attack_ms, release_ms] = kSpeedTable[static_cast<size_t>(speed_)];
+    const float tau_sec = (desired_gain_db > current_gain_db_ ? attack_ms : release_ms) * 0.001f;
+    const float block_dt = static_cast<float>(frames) / static_cast<float>(sampling_rate_);
+    const float block_coeff = 1.0f - std::exp(-block_dt / tau_sec);
+    current_gain_db_ += block_coeff * (desired_gain_db - current_gain_db_);
+
+    const float target_gain_linear = viper::dsp::FastDbToLinear(current_gain_db_);
+    const float gain_start = current_gain_linear_;
+    const float gain_step  = (target_gain_linear - gain_start) / static_cast<float>(frames);
+
+    float g = gain_start;
+#pragma clang loop vectorize(enable)
+    for (size_t i = 0u; i < frames; ++i) {
+        g += gain_step;
+        L[i] *= g;
+        R[i] *= g;
     }
+    current_gain_linear_ = target_gain_linear;
 }
