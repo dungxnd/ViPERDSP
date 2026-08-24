@@ -123,6 +123,46 @@ ViPER::ViPER() :
         software_limiter.SetSamplingRate(sampling_rate_);
         software_limiter.Reset();
     }
+
+    // Populate effect pointer tuple for fold-expression dispatch.
+    // Order must match the EffectPtrTuple declaration in ViPER.h.
+    effect_ptrs_ = {
+        &convolver_, &vhe_, &viper_ddc_, &spectrum_extend_, &iir_filter_,
+        &dynamic_eq_, &colorful_music_, &stereo_imager_, &diff_surround_,
+        &playback_gain_, &multiband_compressor_, &fet_compressor_, &dynamic_system_,
+        &tube_simulator_, &psychoacoustic_bass_, &viper_bass_, &viper_bass_mono_,
+        &viper_clarity_, &cure_, &analog_x_, &reverberation_, &speaker_correction_,
+        &lufs_targeting_
+    };
+
+}
+
+void ViPER::RebuildActivePipelineTopology() noexcept {
+    active_stage_count_ = 0u;
+    // Execution order matches effect_ptrs_ tuple — DO NOT reorder.
+    AddStageIfEnabled(convolver_);
+    AddStageIfEnabled(vhe_);
+    AddStageIfEnabled(viper_ddc_);
+    AddStageIfEnabled(spectrum_extend_);
+    AddStageIfEnabled(iir_filter_);
+    AddStageIfEnabled(dynamic_eq_);
+    AddStageIfEnabled(colorful_music_);
+    AddStageIfEnabled(stereo_imager_);
+    AddStageIfEnabled(diff_surround_);
+    AddStageIfEnabled(playback_gain_);
+    AddStageIfEnabled(multiband_compressor_);
+    AddStageIfEnabled(fet_compressor_);
+    AddStageIfEnabled(dynamic_system_);
+    AddStageIfEnabled(tube_simulator_);
+    AddStageIfEnabled(psychoacoustic_bass_);
+    AddStageIfEnabled(viper_bass_);
+    AddStageIfEnabled(viper_bass_mono_);
+    AddStageIfEnabled(viper_clarity_);
+    AddStageIfEnabled(cure_);
+    AddStageIfEnabled(analog_x_);
+    AddStageIfEnabled(reverberation_);
+    AddStageIfEnabled(speaker_correction_);
+    AddStageIfEnabled(lufs_targeting_);
 }
 
 void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
@@ -132,6 +172,7 @@ void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
     if (pending_effects_reset_.exchange(false, std::memory_order_acquire)) {
         pending_buffers_reset_.store(false, std::memory_order_relaxed);
         ResetAllEffects();
+        RebuildActivePipelineTopology();
     } else if (pending_buffers_reset_.exchange(false, std::memory_order_acquire)) {
         ResetBuffers();
     }
@@ -139,6 +180,7 @@ void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
     // ── 2. Lock-free parameter ingestion (zero mutex overhead) ────────────
     if (param_exchange_.HasPendingUpdate()) {
         ApplyParamsToEffects(param_exchange_.ReadLatest());
+        RebuildActivePipelineTopology();
     }
 
     process_frame_count_ += size;
@@ -151,32 +193,10 @@ void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
     float* __restrict L = planar_context_.left.data();
     float* __restrict R = planar_context_.right.data();
 
-    // ── 4. Planar DSP chain — all effects receive contiguous L[] and R[] ──
-    // Convolver and VHE use zero-copy contiguous Process() via ProcessPlanar().
-    // All other effects use the pre-allocated pp_scratch_ shim — no heap alloc.
-    convolver_.ProcessPlanar(L, R, size);
-    vhe_.ProcessPlanar(L, R, size);
-    viper_ddc_.ProcessPlanar(L, R, size);
-    spectrum_extend_.ProcessPlanar(L, R, size);
-    iir_filter_.ProcessPlanar(L, R, size);
-    dynamic_eq_.ProcessPlanar(L, R, size);
-    colorful_music_.ProcessPlanar(L, R, size);
-    stereo_imager_.ProcessPlanar(L, R, size);
-    diff_surround_.ProcessPlanar(L, R, size);
-    playback_gain_.ProcessPlanar(L, R, size);
-    multiband_compressor_.ProcessPlanar(L, R, size);
-    fet_compressor_.ProcessPlanar(L, R, size);
-    dynamic_system_.ProcessPlanar(L, R, size);
-    tube_simulator_.ProcessPlanar(L, R, size);
-    psychoacoustic_bass_.ProcessPlanar(L, R, size);
-    viper_bass_.ProcessPlanar(L, R, size);
-    viper_bass_mono_.ProcessPlanar(L, R, size);
-    viper_clarity_.ProcessPlanar(L, R, size);
-    cure_.ProcessPlanar(L, R, size);
-    analog_x_.ProcessPlanar(L, R, size);
-    reverberation_.ProcessPlanar(L, R, size);
-    speaker_correction_.ProcessPlanar(L, R, size);
-    lufs_targeting_.ProcessPlanar(L, R, size);
+    // ── 4. Compact active-stage dispatch — only enabled effects ──────────
+    for (size_t i = 0u; i < active_stage_count_; ++i) {
+        active_stages_[i].process_fn(active_stages_[i].instance, L, R, size);
+    }
 
     // ── 5. Master bus: planar gain+pan (SIMD-friendly, no stride) ─────────
     if (frame_scale_ != 1.0f || left_pan_ < 1.0f || right_pan_ < 1.0f) {
@@ -974,74 +994,16 @@ void ViPER::RequestEffectsReset() {
 }
 
 void ViPER::ResetAllEffects() {
-    convolver_.SetSamplingRate(sampling_rate_);
-    convolver_.Reset();
-
-    vhe_.SetSamplingRate(sampling_rate_);
-    vhe_.Reset();
-
-    viper_ddc_.SetSamplingRate(sampling_rate_);
-    viper_ddc_.Reset();
-
-    spectrum_extend_.SetSamplingRate(sampling_rate_);
-    spectrum_extend_.Reset();
-
-    iir_filter_.SetSamplingRate(sampling_rate_);
-    iir_filter_.Reset();
-
-    dynamic_eq_.SetSamplingRate(sampling_rate_);
-    dynamic_eq_.Reset();
-
-    colorful_music_.SetSamplingRate(sampling_rate_);
-    colorful_music_.Reset();
-
-    stereo_imager_.SetSamplingRate(sampling_rate_);
-    stereo_imager_.Reset();
-
-    reverberation_.Reset();
-
-    playback_gain_.SetSamplingRate(sampling_rate_);
-    playback_gain_.Reset();
-
-    lufs_targeting_.SetSamplingRate(sampling_rate_);
-    lufs_targeting_.Reset();
-
-    fet_compressor_.SetSamplingRate(sampling_rate_);
-    fet_compressor_.Reset();
-
-    multiband_compressor_.SetSamplingRate(sampling_rate_);
-    multiband_compressor_.Reset();
-
-    dynamic_system_.SetSamplingRate(sampling_rate_);
-    dynamic_system_.Reset();
-
-    viper_bass_.SetSamplingRate(sampling_rate_);
-    viper_bass_.Reset();
-
-    viper_bass_mono_.SetSamplingRate(sampling_rate_);
-    viper_bass_mono_.Reset();
-
-    psychoacoustic_bass_.SetSamplingRate(sampling_rate_);
-    psychoacoustic_bass_.Reset();
-
-    viper_clarity_.SetSamplingRate(sampling_rate_);
-    viper_clarity_.Reset();
-
-    diff_surround_.SetSamplingRate(sampling_rate_);
-    diff_surround_.Reset();
-
-    cure_.SetSamplingRate(sampling_rate_);
-    cure_.Reset();
-
-    tube_simulator_.SetSamplingRate(sampling_rate_);
-    tube_simulator_.Reset();
-
-    analog_x_.SetSamplingRate(sampling_rate_);
-    analog_x_.Reset();
-
-    speaker_correction_.SetSamplingRate(sampling_rate_);
-    speaker_correction_.Reset();
-
+    // Helper: call SetSamplingRate only if the effect exposes that method.
+    const auto reset_one = [this]<typename E>(E* effect) {
+        if constexpr (requires { effect->SetSamplingRate(sampling_rate_); }) {
+            effect->SetSamplingRate(sampling_rate_);
+        }
+        effect->Reset();
+    };
+    std::apply([&reset_one](auto*... effect) {
+        (reset_one(effect), ...);
+    }, effect_ptrs_);
     for (auto &software_limiter : software_limiters_) {
         software_limiter.SetSamplingRate(sampling_rate_);
         software_limiter.Reset();

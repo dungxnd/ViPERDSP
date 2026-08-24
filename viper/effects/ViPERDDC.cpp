@@ -113,14 +113,36 @@ void ViPERDDC::ReleaseResources() noexcept {
 
 void ViPERDDC::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
     if (!IsEnabled() || frames == 0) return;
-    const auto n = static_cast<uint32_t>(frames);
-    for (size_t i = 0; i < frames; ++i) {
-        pp_scratch_[2u * i]      = L[i];
-        pp_scratch_[2u * i + 1u] = R[i];
-    }
-    Process(pp_scratch_.data(), n);
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = pp_scratch_[2u * i];
-        R[i] = pp_scratch_[2u * i + 1u];
+    if (!set_coeffs_ok_ || arr_size_ == 0) return;
+
+    const std::vector<std::array<float, 5>> *coeffs_arr = nullptr;
+    if      (sampling_rate_ == 44100u) coeffs_arr = &coeffs_arr44100_;
+    else if (sampling_rate_ == 48000u) coeffs_arr = &coeffs_arr48000_;
+    else return;
+
+    for (size_t f = 0; f < frames; ++f) {
+        float sl = L[f];
+        float sr = R[f];
+
+        for (uint32_t j = 0; j < arr_size_; ++j) {
+            const auto& c = (*coeffs_arr)[j];
+            const float b0 = c[0], b1 = c[1], b2 = c[2];
+            const float a1 = c[3], a2 = c[4];
+
+            const float ol = sl * b0 + x1_l_[j] * b1 + x2_l_[j] * b2
+                             + y1_l_[j] * a1 + y2_l_[j] * a2;
+            x2_l_[j] = x1_l_[j]; x1_l_[j] = sl;
+            y2_l_[j] = y1_l_[j]; y1_l_[j] = ol;
+            sl = ol;
+
+            const float or_ = sr * b0 + x1_r_[j] * b1 + x2_r_[j] * b2
+                              + y1_r_[j] * a1 + y2_r_[j] * a2;
+            x2_r_[j] = x1_r_[j]; x1_r_[j] = sr;
+            y2_r_[j] = y1_r_[j]; y1_r_[j] = or_;
+            sr = or_;
+        }
+
+        L[f] = sl;
+        R[f] = sr;
     }
 }

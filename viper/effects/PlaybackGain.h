@@ -9,7 +9,6 @@ class PlaybackGain {
 public:
     PlaybackGain();
 
-    void Process(float* samples, uint32_t size) noexcept;
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
@@ -42,6 +41,4 @@ private:
     Biquad biquad1_;
     Biquad biquad2_;
 
-    [[nodiscard]] double AnalyseWave(const float* samples, uint32_t size) noexcept;
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

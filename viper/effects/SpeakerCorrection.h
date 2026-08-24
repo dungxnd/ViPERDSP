@@ -9,7 +9,7 @@ class SpeakerCorrection {
 public:
     SpeakerCorrection();
 
-    void Process(float *samples, uint32_t size) noexcept;
+    // True planar in-place — no interleave/deinterleave, no scratch buffer.
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
@@ -37,5 +37,4 @@ private:
     void RefreshHighPass() noexcept;
     void RefreshLowPass() noexcept;
     void RefreshBandPass() noexcept;
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

@@ -8,7 +8,6 @@ class Reverberation {
 public:
     Reverberation();
 
-    void Process(float* buffer, uint32_t size) noexcept;
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
@@ -21,7 +20,9 @@ public:
     void SetWidth(float value)    noexcept;
 
 private:
+    void Process(float* buffer, uint32_t size) noexcept;
+
     bool      enable_{false};
     CRevModel model_;
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
+    alignas(64) std::array<float, 4096u * 2u> scratch_{};
 };

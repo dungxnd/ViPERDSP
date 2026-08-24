@@ -82,8 +82,9 @@ private:
     StereoTDF2Biquad stage1_{};
     StereoTDF2Biquad stage2_{};
 
+    alignas(64) std::array<float, 4096u * 2u> scratch_{};
+
     void ConfigureFilters() noexcept;
     void UpdateWindow() noexcept;
     [[nodiscard]] float MeasureLUFS() const noexcept;
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

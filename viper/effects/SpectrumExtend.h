@@ -9,7 +9,6 @@ class SpectrumExtend {
 public:
     SpectrumExtend();
 
-    void Process(float *samples, uint32_t size) noexcept;
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
@@ -20,6 +19,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    void Process(float *samples, uint32_t size) noexcept;
+
     bool enable_{false};
 
     uint32_t sampling_rate_{44100u};
@@ -30,5 +31,4 @@ private:
     std::array<MultiBiquad, 2> highpass_{};
     std::array<MultiBiquad, 2> lowpass_{};
     std::array<Harmonic, 2>    harmonics_{};
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

@@ -8,7 +8,6 @@ class ViPERDDC {
 public:
     ViPERDDC();
 
-    void Process(float *samples, uint32_t size) noexcept;
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
@@ -20,6 +19,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    void Process(float *samples, uint32_t size) noexcept;
+
     bool enable_{false};
     bool set_coeffs_ok_{false};
 
@@ -38,5 +39,4 @@ private:
     std::vector<float> y2_r_;
 
     void ReleaseResources() noexcept;
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

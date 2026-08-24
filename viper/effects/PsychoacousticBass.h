@@ -9,7 +9,6 @@ class PsychoacousticBass {
 public:
     PsychoacousticBass();
 
-    void Process(float* samples, uint32_t size) noexcept;
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
@@ -22,6 +21,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    void Process(float* samples, uint32_t size) noexcept;
+
     bool     enable_{false};
     uint32_t sampling_rate_{44100};
     uint32_t cutoff_{80};
@@ -44,5 +45,4 @@ private:
     void RefreshFilters() noexcept;
     void ApplyHarmonicCoeffs() noexcept;
     void RefreshTimeConstants() noexcept;
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

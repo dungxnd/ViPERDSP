@@ -8,7 +8,6 @@ class Cure {
 public:
     Cure() = default;
 
-    void Process(float *buffer, uint32_t size) noexcept;
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
@@ -26,9 +25,11 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    void Process(float *buffer, uint32_t size) noexcept;
+
     bool enabled_{false};
 
     Crossfeed crossfeed_{};
     PassFilter pass_filter_{};
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
+    alignas(64) std::array<float, 4096u * 2u> scratch_{};
 };

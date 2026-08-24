@@ -286,13 +286,14 @@ void DynamicEQ::RecalcAttackRelease(const uint32_t band) noexcept {
 
 void DynamicEQ::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
     if (!IsEnabled() || frames == 0) return;
+    float* const sc = scratch_.data();
     for (size_t i = 0; i < frames; ++i) {
-        pp_scratch_[2u * i]      = L[i];
-        pp_scratch_[2u * i + 1u] = R[i];
+        sc[2u * i]      = L[i];
+        sc[2u * i + 1u] = R[i];
     }
-    Process(std::span<float>{pp_scratch_.data(), frames * 2u});
+    Process(std::span<float>{sc, frames * 2u});
     for (size_t i = 0; i < frames; ++i) {
-        L[i] = pp_scratch_[2u * i];
-        R[i] = pp_scratch_[2u * i + 1u];
+        L[i] = sc[2u * i];
+        R[i] = sc[2u * i + 1u];
     }
 }

@@ -4,23 +4,34 @@ SpeakerCorrection::SpeakerCorrection() {
     Reset();
 }
 
-void SpeakerCorrection::Process(float *samples, const uint32_t size) noexcept {
-    if (!enable_) return;
+// True planar in-place processing.
+//
+// Signal graph (matches the original interleaved Process()):
+//   stage1 = LP(input)
+//   stage2 = HP(stage1)
+//   stage3 = stage2 / 2.0 + BP(stage2 / 2.0)   ← same as original
+//
+// Iterates directly over L[] and R[] (stride-1), eliminating the interleave
+// and deinterleave copies from the legacy shim.
+void SpeakerCorrection::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
+    if (!enable_ || frames == 0) return;
 
-    for (uint32_t i = 0; i < size * 2; i += 2) {
-        double out_l = samples[i];
-        out_l = low_pass_[0].ProcessSample(out_l);
-        out_l = high_pass_[0].ProcessSample(out_l);
-        out_l /= 2.0;
-        out_l += band_pass_[0].ProcessSample(out_l);
-        samples[i] = static_cast<float>(out_l);
+    auto& lp_l = low_pass_[0];   auto& lp_r = low_pass_[1];
+    auto& hp_l = high_pass_[0];  auto& hp_r = high_pass_[1];
+    auto& bp_l = band_pass_[0];  auto& bp_r = band_pass_[1];
 
-        double out_r = samples[i + 1];
-        out_r = low_pass_[1].ProcessSample(out_r);
-        out_r = high_pass_[1].ProcessSample(out_r);
-        out_r /= 2.0;
-        out_r += band_pass_[1].ProcessSample(out_r);
-        samples[i + 1] = static_cast<float>(out_r);
+    for (size_t i = 0; i < frames; ++i) {
+        double s_l = lp_l.ProcessSample(L[i]);
+        s_l = hp_l.ProcessSample(s_l);
+        s_l /= 2.0;
+        s_l += bp_l.ProcessSample(s_l);
+        L[i] = static_cast<float>(s_l);
+
+        double s_r = lp_r.ProcessSample(R[i]);
+        s_r = hp_r.ProcessSample(s_r);
+        s_r /= 2.0;
+        s_r += bp_r.ProcessSample(s_r);
+        R[i] = static_cast<float>(s_r);
     }
 }
 
@@ -102,19 +113,5 @@ void SpeakerCorrection::RefreshBandPass() noexcept {
         f.SetBandPassParameter(
             static_cast<float>(bp_center_), sampling_rate_, bp_q_
         );
-    }
-}
-
-void SpeakerCorrection::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
-    const auto n = static_cast<uint32_t>(frames);
-    for (size_t i = 0; i < frames; ++i) {
-        pp_scratch_[2u * i]      = L[i];
-        pp_scratch_[2u * i + 1u] = R[i];
-    }
-    Process(pp_scratch_.data(), n);
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = pp_scratch_[2u * i];
-        R[i] = pp_scratch_[2u * i + 1u];
     }
 }

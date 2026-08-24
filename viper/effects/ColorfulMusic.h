@@ -9,7 +9,6 @@ class ColorfulMusic {
 public:
     ColorfulMusic();
 
-    void Process(float* samples, uint32_t size);
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset();
 
@@ -21,10 +20,12 @@ public:
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
+    void Process(float* samples, uint32_t size);
+
     bool     enabled_      = false;
     uint32_t sampling_rate_ = 44100;
 
     Stereo3DSurround stereo_3d_surround_;
     DepthSurround    depth_surround_;
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
+    alignas(64) std::array<float, 4096u * 2u> scratch_{};
 };

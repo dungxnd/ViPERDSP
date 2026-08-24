@@ -1,7 +1,6 @@
 #include "AnalogX.h"
 #include <algorithm>
 #include <array>
-#include <span>
 #include <utility>
 
 static constexpr float kOutputScale = 0.8f;
@@ -15,28 +14,48 @@ AnalogX::AnalogX() {
     Reset();
 }
 
-void AnalogX::Process(float* const samples, const uint32_t size) {
-    if (!enable_) return;
+// True planar in-place processing.
+//
+// Signal graph (matches the original interleaved Process()):
+//   hp_out  = HP(input)
+//   harm    = Harmonic(hp_out)
+//   lp_out  = LP(input + harm * gain_)   ← LP receives ORIGINAL input, not HP output
+//   scaled  = lp_out * kOutputScale
+//   output  = Peak(scaled)
+//
+// We process both channels per sample, iterating over the planar arrays
+// directly (stride-1, no interleave copies).
+void AnalogX::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
+    if (!enable_ || frames == 0) return;
 
-    for (uint32_t i = 0; i < size * 2; i += 2) {
-        const double in_l = samples[i];
-        double out_l = high_pass_[0].ProcessSample(in_l);
-        out_l = harmonic_[0].Process(out_l);
-        out_l = low_pass_[0].ProcessSample(in_l + out_l * gain_);
-        out_l = peak_[0].ProcessSample(out_l * kOutputScale);
-        samples[i] = static_cast<float>(out_l);
+    auto& hp_l = high_pass_[0]; auto& hp_r = high_pass_[1];
+    auto& lp_l = low_pass_[0];  auto& lp_r = low_pass_[1];
+    auto& pk_l = peak_[0];      auto& pk_r = peak_[1];
+    auto& hm_l = harmonic_[0];  auto& hm_r = harmonic_[1];
 
-        const double in_r = samples[i + 1];
-        double out_r = high_pass_[1].ProcessSample(in_r);
-        out_r = harmonic_[1].Process(out_r);
-        out_r = low_pass_[1].ProcessSample(in_r + out_r * gain_);
-        out_r = peak_[1].ProcessSample(out_r * kOutputScale);
-        samples[i + 1] = static_cast<float>(out_r);
+    for (size_t i = 0; i < frames; ++i) {
+        // Left channel
+        const double in_l  = L[i];
+        const double hp_l_out = hp_l.ProcessSample(in_l);
+        const double harm_l   = hm_l.Process(hp_l_out);
+        const double lp_l_out = lp_l.ProcessSample(in_l + harm_l * static_cast<double>(gain_));
+        const double pk_l_out = pk_l.ProcessSample(lp_l_out * kOutputScale);
+        L[i] = static_cast<float>(pk_l_out);
+
+        // Right channel
+        const double in_r  = R[i];
+        const double hp_r_out = hp_r.ProcessSample(in_r);
+        const double harm_r   = hm_r.Process(hp_r_out);
+        const double lp_r_out = lp_r.ProcessSample(in_r + harm_r * static_cast<double>(gain_));
+        const double pk_r_out = pk_r.ProcessSample(lp_r_out * kOutputScale);
+        R[i] = static_cast<float>(pk_r_out);
     }
 
     if (freq_range_ < sampling_rate_ / 4) {
-        freq_range_ += size;
-        std::fill_n(samples, size * 2, 0.0f);
+        const auto mute = std::min(frames, static_cast<size_t>(sampling_rate_ / 4 - freq_range_));
+        std::fill_n(L, mute, 0.0f);
+        std::fill_n(R, mute, 0.0f);
+        freq_range_ += static_cast<uint32_t>(mute);
     }
 }
 
@@ -98,18 +117,4 @@ void AnalogX::SetSamplingRate(const uint32_t sampling_rate) {
 void AnalogX::SetProcessingModel(const int model) {
     const auto clamped = static_cast<std::size_t>(std::clamp(model, 0, 2));
     SetProcessingModel(static_cast<ProcessingModel>(clamped));
-}
-
-void AnalogX::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
-    const auto n = static_cast<uint32_t>(frames);
-    for (size_t i = 0; i < frames; ++i) {
-        pp_scratch_[2u * i]      = L[i];
-        pp_scratch_[2u * i + 1u] = R[i];
-    }
-    Process(pp_scratch_.data(), n);
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = pp_scratch_[2u * i];
-        R[i] = pp_scratch_[2u * i + 1u];
-    }
 }

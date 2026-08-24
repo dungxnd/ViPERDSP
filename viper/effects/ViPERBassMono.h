@@ -18,8 +18,6 @@ public:
 
     ViPERBassMono();
 
-    // samples: interleaved stereo, size = frame count (not sample count).
-    void Process(std::span<float> samples) noexcept;
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
@@ -32,6 +30,9 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    // samples: interleaved stereo, size = frame count (not sample count).
+    void Process(std::span<float> samples) noexcept;
+
     bool enable_{false};
 
     ProcessMode process_mode_{ProcessMode::NaturalBass};
@@ -67,7 +68,7 @@ private:
     // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend and
     // ProcessPureBassPlus FIR pass.  Sized in ctor / SetSamplingRate().
     std::vector<float> scratch_buffer_;
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
+    alignas(64) std::array<float, 4096u * 2u> planar_scratch_{};
 
     void ShapeMix(float bass, float& left, float& right) noexcept;
     void ProcessNaturalBass (StereoView audio) noexcept;

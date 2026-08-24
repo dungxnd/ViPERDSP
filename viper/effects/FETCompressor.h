@@ -109,5 +109,4 @@ private:
     float knee_multi_{2.0f};
     float adapt_coeff_{0.0f};
     float adaptive_gain_state_{0.0f};
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

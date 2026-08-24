@@ -76,14 +76,16 @@ void SpectrumExtend::SetSamplingRate(const uint32_t sampling_rate) noexcept {
 
 void SpectrumExtend::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
     if (!IsEnabled() || frames == 0) return;
-    const auto n = static_cast<uint32_t>(frames);
-    for (size_t i = 0; i < frames; ++i) {
-        pp_scratch_[2u * i]      = L[i];
-        pp_scratch_[2u * i + 1u] = R[i];
-    }
-    Process(pp_scratch_.data(), n);
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = pp_scratch_[2u * i];
-        R[i] = pp_scratch_[2u * i + 1u];
+
+    for (size_t i = 0u; i < frames; ++i) {
+        double tmp_l = highpass_[0].ProcessSample(L[i]);
+        tmp_l = harmonics_[0].Process(tmp_l);
+        tmp_l = lowpass_[0].ProcessSample(tmp_l * exciter_);
+        L[i] += static_cast<float>(tmp_l);
+
+        double tmp_r = highpass_[1].ProcessSample(R[i]);
+        tmp_r = harmonics_[1].Process(tmp_r);
+        tmp_r = lowpass_[1].ProcessSample(tmp_r * exciter_);
+        R[i] += static_cast<float>(tmp_r);
     }
 }

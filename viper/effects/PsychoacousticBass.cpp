@@ -154,14 +154,31 @@ void PsychoacousticBass::ApplyHarmonicCoeffs() noexcept {
 
 void PsychoacousticBass::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
     if (!IsEnabled() || frames == 0) return;
-    const auto n = static_cast<uint32_t>(frames);
-    for (size_t i = 0; i < frames; ++i) {
-        pp_scratch_[2u * i]      = L[i];
-        pp_scratch_[2u * i + 1u] = R[i];
-    }
-    Process(pp_scratch_.data(), n);
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = pp_scratch_[2u * i];
-        R[i] = pp_scratch_[2u * i + 1u];
+
+    for (size_t i = 0u; i < frames; ++i) {
+        const double bass_l = lowpass_[0].ProcessSample(L[i]);
+        const double bass_r = lowpass_[1].ProcessSample(R[i]);
+
+        const double peak = std::max(std::abs(bass_l), std::abs(bass_r));
+        envelope_ += (peak > envelope_) ? att_coeff_ * (peak - envelope_)
+                                        : rel_coeff_ * (peak - envelope_);
+        envelope_ = std::max(envelope_, 1e-10);
+
+        const double norm_l = std::clamp(bass_l / envelope_, -1.0, 1.0);
+        const double norm_r = std::clamp(bass_r / envelope_, -1.0, 1.0);
+
+        double harmonic_l = harmonics_[0].Process(norm_l) * envelope_;
+        double harmonic_r = harmonics_[1].Process(norm_r) * envelope_;
+
+        harmonic_l = highpass_[0].ProcessSample(harmonic_l);
+        harmonic_r = highpass_[1].ProcessSample(harmonic_r);
+
+        L[i] += static_cast<float>(harmonic_l * intensity_);
+        R[i] += static_cast<float>(harmonic_r * intensity_);
+
+        if (original_bass_level_ < 1.0f) {
+            L[i] = (L[i] - static_cast<float>(bass_l)) + static_cast<float>(bass_l) * original_bass_level_;
+            R[i] = (R[i] - static_cast<float>(bass_r)) + static_cast<float>(bass_r) * original_bass_level_;
+        }
     }
 }

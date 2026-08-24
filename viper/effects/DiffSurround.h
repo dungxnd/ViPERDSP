@@ -9,7 +9,6 @@ class DiffSurround {
 public:
     DiffSurround();
 
-    void Process(float *samples, uint32_t size);
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset();
 
@@ -22,6 +21,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
+    void Process(float *samples, uint32_t size);
+
     bool enable_{false};
     bool reverse_{false};
 
@@ -33,5 +34,5 @@ private:
 
     std::array<WaveBuffer, 2> buffers_{WaveBuffer(1, 0x1000), WaveBuffer(1, 0x1000)};
     MultiBiquad lp_filter_{};
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
+    alignas(64) std::array<float, 4096u * 2u> scratch_{};
 };

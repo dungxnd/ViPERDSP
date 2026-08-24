@@ -274,15 +274,20 @@ void FETCompressor::SetSamplingRate(const uint32_t sampling_rate) noexcept {
 }
 
 void FETCompressor::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
-    const auto n = static_cast<uint32_t>(frames);
-    for (size_t i = 0; i < frames; ++i) {
-        pp_scratch_[2u * i]      = L[i];
-        pp_scratch_[2u * i + 1u] = R[i];
-    }
-    Process(pp_scratch_.data(), n);
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = pp_scratch_[2u * i];
-        R[i] = pp_scratch_[2u * i + 1u];
+    if (!IsEnabled() || frames == 0u) return;
+
+    for (size_t i = 0u; i < frames; ++i) {
+        const double sidechain_in = std::max(
+            std::abs(static_cast<double>(L[i])),
+            std::abs(static_cast<double>(R[i]))
+        );
+        const double gain_multiplier = ProcessSidechain(sidechain_in);
+
+        L[i] *= static_cast<float>(gain_multiplier);
+        R[i] *= static_cast<float>(gain_multiplier);
+
+        smoothed_threshold_ln_ += (target_threshold_ln_ - smoothed_threshold_ln_) * param_smoothing_coeff_;
+        smoothed_gain_ln_      += (target_gain_ln_      - smoothed_gain_ln_)      * param_smoothing_coeff_;
+        smoothed_knee_ln_      += (target_knee_ln_      - smoothed_knee_ln_)      * param_smoothing_coeff_;
     }
 }

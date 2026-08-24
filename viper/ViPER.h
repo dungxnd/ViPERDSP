@@ -3,10 +3,10 @@
 #include <array>
 #include <atomic>
 #include <optional>
+#include <tuple>
 #include <vector>
 
 #include "ViPERParams.h"
-#include "core/AudioBlock.h"
 #include "core/AudioContext.h"
 #include "core/ParamExchange.h"
 #include "effects/AnalogX.h"
@@ -172,4 +172,48 @@ private:
     // Tracks the last snapshot successfully applied to effects (delta-check
     // guard inside ApplyParamsToEffects).
     viper::ViPERParams last_applied_;
+
+    // ── DRY effect tuple for fold-expression lifecycle ops ─────────────────
+    // Contains non-owning pointers to the named effect members above so that
+    // ResetAllEffects() and the Process() DSP chain collapse to single fold
+    // expressions.  Populated at the end of the ViPER constructor.
+    template <typename... Effects>
+    using EffectPtrTuple = std::tuple<Effects*...>;
+
+    EffectPtrTuple<
+        Convolver, VHE, ViPERDDC, SpectrumExtend, IIRFilter,
+        DynamicEQ, ColorfulMusic, StereoImager, DiffSurround,
+        PlaybackGain, MultibandCompressor, FETCompressor, DynamicSystem,
+        TubeSimulator, PsychoacousticBass, ViPERBass, ViPERBassMono,
+        ViPERClarity, Cure, AnalogX, Reverberation, SpeakerCorrection,
+        LUFSTargeting
+    > effect_ptrs_;
+
+    // ── Active-stage compacted pipeline dispatcher ─────────────────────────
+    // Rebuilt whenever parameters change (enabled-set changes).
+    // Only enabled effects appear — zero dispatch overhead for disabled stages.
+    struct PipelineStage {
+        void* instance{nullptr};
+        void (*process_fn)(void* instance, float* L, float* R, size_t frames) noexcept {nullptr};
+    };
+    static constexpr size_t kMaxPipelineStages = 24u;
+    std::array<PipelineStage, kMaxPipelineStages> active_stages_{};
+    size_t active_stage_count_{0u};
+
+    template <typename T>
+    static void InvokeStage(void* inst, float* L, float* R, size_t frames) noexcept {
+        static_cast<T*>(inst)->ProcessPlanar(L, R, frames);
+    }
+
+    template <typename T>
+    void AddStageIfEnabled(T& effect) noexcept {
+        if (effect.IsEnabled()) {
+            active_stages_[active_stage_count_++] = PipelineStage{
+                .instance   = &effect,
+                .process_fn = &InvokeStage<T>
+            };
+        }
+    }
+
+    void RebuildActivePipelineTopology() noexcept;
 };

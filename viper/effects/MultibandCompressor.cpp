@@ -6,7 +6,6 @@ namespace {
 
 constexpr std::array<float, 2> kDefault3BandFreqs = { 200.0f, 4000.0f };
 constexpr std::array<float, 4> kDefault5BandFreqs = { 120.0f, 500.0f, 4000.0f, 8000.0f };
-constexpr float kButterworthQ = 0.7071f;
 
 } // anonymous namespace
 
@@ -28,29 +27,10 @@ void MultibandCompressor::Process(float* const samples, const uint32_t size) noe
 
     for (uint32_t b = 0; b < band_count_; ++b) {
         for (uint32_t i = 0; i < frame_count; i += 2) {
-            auto sample_l = static_cast<double>(samples[i]);
-            auto sample_r = static_cast<double>(samples[i + 1]);
+            double sample_l = static_cast<double>(samples[i]);
+            double sample_r = static_cast<double>(samples[i + 1]);
 
-            if (b == 0) {
-                sample_l = lowpass_la_[0].ProcessSample(sample_l);
-                sample_l = lowpass_lb_[0].ProcessSample(sample_l);
-                sample_r = lowpass_ra_[0].ProcessSample(sample_r);
-                sample_r = lowpass_rb_[0].ProcessSample(sample_r);
-            } else if (b == num_crossovers) {
-                sample_l = highpass_la_[num_crossovers - 1].ProcessSample(sample_l);
-                sample_l = highpass_lb_[num_crossovers - 1].ProcessSample(sample_l);
-                sample_r = highpass_ra_[num_crossovers - 1].ProcessSample(sample_r);
-                sample_r = highpass_rb_[num_crossovers - 1].ProcessSample(sample_r);
-            } else {
-                sample_l = highpass_la_[b - 1].ProcessSample(sample_l);
-                sample_l = highpass_lb_[b - 1].ProcessSample(sample_l);
-                sample_l = lowpass_la_[b].ProcessSample(sample_l);
-                sample_l = lowpass_lb_[b].ProcessSample(sample_l);
-                sample_r = highpass_ra_[b - 1].ProcessSample(sample_r);
-                sample_r = highpass_rb_[b - 1].ProcessSample(sample_r);
-                sample_r = lowpass_ra_[b].ProcessSample(sample_r);
-                sample_r = lowpass_rb_[b].ProcessSample(sample_r);
-            }
+            crossover_.ProcessSampleStereo(b, band_count_, sample_l, sample_r);
 
             band_buffers_[b][i]     = static_cast<float>(sample_l);
             band_buffers_[b][i + 1] = static_cast<float>(sample_r);
@@ -73,12 +53,7 @@ void MultibandCompressor::Process(float* const samples, const uint32_t size) noe
 
 void MultibandCompressor::Reset() noexcept {
     for (auto& comp : compressors_) comp.Reset();
-    for (uint32_t i = 0; i < kMaxCrossovers; ++i) {
-        lowpass_la_[i].Reset();  lowpass_lb_[i].Reset();
-        lowpass_ra_[i].Reset();  lowpass_rb_[i].Reset();
-        highpass_la_[i].Reset(); highpass_lb_[i].Reset();
-        highpass_ra_[i].Reset(); highpass_rb_[i].Reset();
-    }
+    crossover_.Reset();
     ConfigureCrossovers();
 }
 
@@ -206,41 +181,22 @@ void MultibandCompressor::SetBandNoClip(const uint32_t band, const bool enable) 
 }
 
 void MultibandCompressor::ConfigureCrossovers() noexcept {
-    // Collect the 8 filter arrays updated per crossover into a flat list for
-    // a single loop — avoids 8× repeated RefreshFilter call blocks.
-    const std::array<MultiBiquad*, 8> filter_sets{
-        lowpass_la_.data(),  lowpass_lb_.data(),
-        lowpass_ra_.data(),  lowpass_rb_.data(),
-        highpass_la_.data(), highpass_lb_.data(),
-        highpass_ra_.data(), highpass_rb_.data(),
-    };
-
-    const uint32_t num_crossovers = band_count_ - 1;
-
-    for (uint32_t i = 0; i < num_crossovers; ++i) {
-        // First 4 sets are low-pass, last 4 are high-pass
-        const MultiBiquad::FilterType lp = MultiBiquad::LOW_PASS;
-        const MultiBiquad::FilterType hp = MultiBiquad::HIGH_PASS;
-
-        for (uint32_t s = 0; s < 8; ++s) {
-            filter_sets[s][i].RefreshFilter(
-                s < 4 ? lp : hp,
-                1.0f, crossover_freqs_[i], sampling_rate_, kButterworthQ, false
-            );
-        }
-    }
+    crossover_.Configure(crossover_freqs_.data(), band_count_ - 1u, sampling_rate_);
 }
 
 void MultibandCompressor::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
     if (!IsEnabled() || frames == 0) return;
     const auto n = static_cast<uint32_t>(frames);
-    for (size_t i = 0; i < frames; ++i) {
-        pp_scratch_[2u * i]      = L[i];
-        pp_scratch_[2u * i + 1u] = R[i];
+    // Process() already owns band_buffers_ — reuse band_buffers_[0] as interleave
+    // scratch; it is unconditionally overwritten on entry to Process().
+    float* const sc = band_buffers_[0].data();
+    for (size_t i = 0u; i < frames; ++i) {
+        sc[2u * i]      = L[i];
+        sc[2u * i + 1u] = R[i];
     }
-    Process(pp_scratch_.data(), n);
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = pp_scratch_[2u * i];
-        R[i] = pp_scratch_[2u * i + 1u];
+    Process(sc, n);
+    for (size_t i = 0u; i < frames; ++i) {
+        L[i] = sc[2u * i];
+        R[i] = sc[2u * i + 1u];
     }
 }

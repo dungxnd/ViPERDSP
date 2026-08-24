@@ -4,14 +4,21 @@
 // IPC/Binder thread writes via Update().
 // Real-time audio thread reads via HasPendingUpdate() + ReadLatest().
 //
-// Guarantee: ReadLatest() always returns the *most recently committed* state;
-// intermediate writes that arrive before the RT thread consumes the previous
-// update are safely overwritten ("latest wins" — acceptable for audio params).
+// Uses a wait-free atomic triple buffer.  Three slots: one owned by the
+// writer, one published (shared), one owned by the reader.  shared_idx_
+// holds the index of the most recently published snapshot.  Update()
+// exchanges write_idx_ with shared_idx_ to atomically publish; ReadLatest()
+// exchanges read_idx_ with shared_idx_ to atomically consume.
+//
+// Guarantee: ReadLatest() always returns the *most recently committed* state.
+// Intermediate writes that arrive before the RT thread consumes the previous
+// update are safely discarded ("latest wins" — acceptable for audio params).
 //
 // Memory ordering:
-//   Update() — release-store on write_idx_ after the buffer write, so the RT
-//               thread sees the complete struct when it acquires write_idx_.
-//   ReadLatest() — acquire-load on write_idx_ mirrors the release above.
+//   Update()     — acq_rel on shared_idx_ exchange; ensures the buffer write
+//                  is visible before the index swap and that we see the
+//                  reader's previous exchange.
+//   ReadLatest() — acq_rel on has_new_data_ exchange + shared_idx_ exchange.
 
 #include <array>
 #include <atomic>
@@ -20,47 +27,52 @@
 namespace viper::core {
 
 template <typename T>
-class DoubleBufferedState {
+class TripleBufferedState {
 public:
-    // Writer thread (IPC / Binder) ─────────────────────────────────────────
-
-    // Publish a new parameter snapshot.  The write goes into the buffer that
-    // the RT thread is *not* currently reading, then the index is atomically
-    // flipped with a release store so all struct writes are visible on acquire.
-    void Update(const T &new_state) noexcept {
-        const uint32_t current = write_idx_.load(std::memory_order_relaxed);
-        const uint32_t next    = 1u - current;
-        buffers_[next]         = new_state;
-        // Release: guarantees buffers_[next] is fully written before index flip.
-        write_idx_.store(next, std::memory_order_release);
-        has_update_.store(true, std::memory_order_release);
+    TripleBufferedState() noexcept {
+        shared_idx_.store(0u, std::memory_order_relaxed);
     }
 
-    // Reader thread (Real-Time Audio) ───────────────────────────────────────
+    // Writer thread (IPC / Binder) — Lock-free, Wait-free
+    void Update(const T& new_state) noexcept {
+        buffers_[write_idx_] = new_state;
+        // Atomically exchange our write slot with the shared slot so the
+        // RT thread can fetch it.  acq_rel: acquire to see any prior reader
+        // exchange; release so the buffer write is visible.
+        write_idx_ = shared_idx_.exchange(write_idx_, std::memory_order_acq_rel);
+        has_new_data_.store(true, std::memory_order_release);
+    }
 
-    // Returns true if Update() has been called since the last ReadLatest().
-    // Cheap acquire-load; call at the top of Process() to skip snapshot work
-    // when nothing has changed.
+    // Reader thread (RT Audio) — Lock-free, Wait-free
     [[nodiscard]] bool HasPendingUpdate() const noexcept {
-        return has_update_.load(std::memory_order_acquire);
+        return has_new_data_.load(std::memory_order_acquire);
     }
 
-    // Consume the latest snapshot.  Must be called only from the RT thread,
-    // and only after HasPendingUpdate() returns true.
-    // Clears the pending flag and returns a const-ref to the active buffer.
-    // The reference is valid until the next call to Update() from the writer.
-    [[nodiscard]] const T &ReadLatest() noexcept {
-        has_update_.store(false, std::memory_order_relaxed);
-        // Acquire: pairs with the release in Update(), ensuring we see the
-        // entire struct written into buffers_[active].
-        const uint32_t active = write_idx_.load(std::memory_order_acquire);
-        return buffers_[active];
+    [[nodiscard]] const T& ReadLatest() noexcept {
+        if (has_new_data_.exchange(false, std::memory_order_acq_rel)) {
+            // Atomically take the published slot; give our old read slot back.
+            read_idx_ = shared_idx_.exchange(read_idx_, std::memory_order_acq_rel);
+        }
+        return buffers_[read_idx_];
     }
 
 private:
-    alignas(64) std::array<T, 2> buffers_{};
-    std::atomic<uint32_t>        write_idx_{0u};
-    std::atomic<bool>            has_update_{false};
+    alignas(64) std::array<T, 3> buffers_{};
+
+    // shared_idx_ is the "mailbox" between writer and reader threads.
+    std::atomic<uint8_t> shared_idx_{0u};
+    // has_new_data_ signals the RT thread that a new snapshot is available.
+    std::atomic<bool> has_new_data_{false};
+
+    // write_idx_ is accessed exclusively by the writer (IPC thread).
+    // read_idx_  is accessed exclusively by the reader (RT audio thread).
+    // Neither needs to be atomic.
+    uint8_t write_idx_{1u};
+    uint8_t read_idx_{2u};
 };
+
+// Backward-compat alias — ViPER.h declares DoubleBufferedState<ViPERParams>.
+template <typename T>
+using DoubleBufferedState = TripleBufferedState<T>;
 
 } // namespace viper::core

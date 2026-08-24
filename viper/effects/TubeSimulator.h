@@ -28,7 +28,6 @@ public:
 
     TubeSimulator();
 
-    void Process(float *buffer, uint32_t size) noexcept;
     void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
@@ -42,6 +41,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    void Process(float *buffer, uint32_t size) noexcept;
+
     bool     enable_{false};
     TubeType tube_type_{TubeType::k12AX7};
     TubeMode tube_mode_{TubeMode::kStatic};
@@ -58,5 +59,4 @@ private:
     // so dry and wet signal accumulate identical phase rotation before blending.
     std::array<MultiBiquad, 2> dry_apf_hpf_{};
     std::array<MultiBiquad, 2> dry_apf_lpf_{};
-    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };
