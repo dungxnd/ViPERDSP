@@ -97,24 +97,28 @@ struct StereoBiquadCoeffs {
         };
     }
 
-    // ── AllPass (2nd-order, phase-compensating) ────────────────────────────
-    // Derived from the Linkwitz-Riley identity: LP(z) + HP(z) = AP(z).
-    // Numerator = LP.b + HP.b (element-wise), denominator unchanged.
-    // Two cascaded AP biquads produce AP_LR4, the 4th-order allpass such that:
-    //   LP_LR4(f) + HP_LR4(f) = AP_LR4(f)  (flat magnitude at all frequencies).
+    // ── AllPass (2nd-order, RBJ cookbook) ─────────────────────────────────
+    // Standard 2nd-order allpass: |H(e^jω)| = 1 at all frequencies.
+    // Coefficients satisfy the reversed-denominator condition b[k] = a[N-k]:
+    //   b0 = a2 = (1-α)/a0,  b1 = a1 = -2cos/a0,  b2 = 1  (a0-normalised).
+    //
+    // Used for phase-synchronisation in LinkwitzRileyCrossover:
+    //   LP_LR4(z) + HP_LR4(z) = AP_2nd(z)  (Sophie Germain identity on numerator)
+    // The AP_2nd is exactly ONE biquad stage — NOT two cascaded stages.
+    //
+    // NOTE: b2 = 1.0f (not divided by a0).  All other factory methods
+    //       divide b2 by a0; this method intentionally does not, because
+    //       the a0-normalised allpass form requires b2 = (1+α)/a0 = 1.
     [[nodiscard]] static StereoBiquadCoeffs MakeAllPass(float freq_hz, float q, float fs) noexcept {
         const float w0    = 2.0f * std::numbers::pi_v<float> * freq_hz / fs;
         const float cos_w = std::cos(w0);
         const float sin_w = std::sin(w0);
         const float alpha = sin_w / (2.0f * q);
         const float a0    = 1.0f + alpha;
-        // b0 = LP.b0 + HP.b0 = (1-cos)/2/a0 + (1+cos)/2/a0 = 1/a0
-        // b1 = LP.b1 + HP.b1 = (1-cos)/a0 + -(1+cos)/a0   = -2*cos/a0 = a1
-        // b2 = LP.b2 + HP.b2 = (1-cos)/2/a0 + (1+cos)/2/a0 = 1/a0 = b0
         return {
-            .b0 =  1.0f / a0,
+            .b0 = (1.0f - alpha) / a0,
             .b1 = (-2.0f * cos_w) / a0,
-            .b2 =  1.0f / a0,
+            .b2 =  1.0f,            // (1+alpha)/a0 = 1 after a0-normalization
             .a1 = (-2.0f * cos_w) / a0,
             .a2 = (1.0f - alpha) / a0,
         };

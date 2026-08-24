@@ -1389,7 +1389,7 @@ void ViPER::ApplySpeakerCorrection(const viper::SpeakerCorrectionParams &p) {
 void ViPER::ApplyMultibandCompressor(const viper::MultibandCompressorParams &p) {
     multiband_compressor_.SetEnable(p.enable);
     multiband_compressor_.SetBandCount(p.band_count);
-    for (uint32_t i = 0; i < p.band_count && i < p.crossover_frequencies.size(); i++) {
+    for (uint32_t i = 0; i < (p.band_count - 1u) && i < p.crossover_frequencies.size(); ++i) {
         multiband_compressor_.SetCrossoverFrequency(i, p.crossover_frequencies[i]);
     }
     for (uint32_t i = 0; i < p.band_count && i < p.bands.size(); i++) {
