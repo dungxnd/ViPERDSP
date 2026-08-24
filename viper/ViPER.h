@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "ViPERParams.h"
+#include "core/AudioBlock.h"
+#include "core/ParamExchange.h"
 #include "effects/AnalogX.h"
 #include "effects/ColorfulMusic.h"
 #include "effects/Convolver.h"
@@ -30,7 +32,6 @@
 #include "effects/ViPERBassMono.h"
 #include "effects/ViPERClarity.h"
 #include "effects/ViPERDDC.h"
-#include "utils/AdaptiveBuffer.h"
 
 class ViPER {
 public:
@@ -47,6 +48,10 @@ public:
     void RequestBuffersReset();
     void ResetBuffers();
 
+    // Stage a new parameter snapshot for the RT thread to consume on the
+    // next Process() call.  Safe to call from any non-RT thread.
+    // Does NOT mutate effect state directly — the RT thread applies the
+    // snapshot at the top of Process() via ApplyParamsToEffects().
     void ApplyParams(const viper::ViPERParams &params);
     void ApplyMasterLimiter(const viper::MasterLimiterParams &p);
     void ApplyPlaybackGainControl(const viper::PlaybackGainControlParams &p);
@@ -107,6 +112,12 @@ public:
         }
     }
 
+    // ── Private helpers ────────────────────────────────────────────────────
+
+    // Apply a parameter snapshot to all effect objects.
+    // Called exclusively from the RT audio thread inside Process().
+    void ApplyParamsToEffects(const viper::ViPERParams &params);
+
 private:
     std::atomic<bool> pending_effects_reset_{false};
     std::atomic<bool> pending_buffers_reset_{false};
@@ -118,8 +129,19 @@ private:
     float left_pan_;
     float right_pan_;
 
+    // ── Control-plane / data-plane parameter exchange ──────────────────────
+    // IPC thread writes via ApplyParams(); RT thread reads at top of Process().
+    viper::core::DoubleBufferedState<viper::ViPERParams> param_exchange_;
+
+    // Accumulates incremental DispatchRawParam() mutations so the RT thread
+    // always sees a consistent full-state snapshot via param_exchange_.
+    viper::ViPERParams staged_params_;
+
+    // Pre-allocated planar scratch block — used by effects that expose a
+    // ProcessPlanar() interface and for scale/pan in the master bus.
+    viper::core::PlanarAudioBlock<4096> planar_context_;
+
     // Effects
-    AdaptiveBuffer adaptive_buffer_;
     Convolver convolver_;
     VHE vhe_;
     ViPERDDC viper_ddc_;
@@ -145,5 +167,7 @@ private:
     SpeakerCorrection speaker_correction_;
     std::array<SoftwareLimiter, 2> software_limiters_;
 
+    // Tracks the last snapshot successfully applied to effects (delta-check
+    // guard inside ApplyParamsToEffects).
     viper::ViPERParams last_applied_;
 };

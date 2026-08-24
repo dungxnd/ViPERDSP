@@ -24,7 +24,6 @@ ViPER::ViPER() :
     frame_scale_(1.0f),
     left_pan_(1.0f),
     right_pan_(1.0f),
-    adaptive_buffer_(AdaptiveBuffer(2, 4096)),
     iir_filter_(IIRFilter(10)) {
     VIPER_LOGI("Welcome to ViPER FX");
     VIPER_LOGI("Current version is %s (%d)", VERSION_NAME, VERSION_CODE);
@@ -127,87 +126,80 @@ ViPER::ViPER() :
 }
 
 void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
+    if (size == 0 || buffer.size() < size * 2u) return;
+
+    // ── 1. Pending resets (atomic, RT-safe) ────────────────────────────────
     if (pending_effects_reset_.exchange(false, std::memory_order_acquire)) {
         pending_buffers_reset_.store(false, std::memory_order_relaxed);
         ResetAllEffects();
     } else if (pending_buffers_reset_.exchange(false, std::memory_order_acquire)) {
         ResetBuffers();
     }
+
+    // ── 2. Lock-free parameter ingestion (zero mutex overhead) ────────────
+    // The IPC/Binder thread stages updates via ApplyParams() → param_exchange_.
+    // We consume the latest snapshot here, on the RT thread, before touching
+    // any effect state — eliminating the control-plane / data-plane race.
+    if (param_exchange_.HasPendingUpdate()) {
+        ApplyParamsToEffects(param_exchange_.ReadLatest());
+    }
+
     process_frame_count_ += size;
 
-    float *tmp_buf;
-    uint32_t tmp_buf_size;
+    // ── 3. DSP chain — process in-place on the caller's buffer ────────────
+    // All effects operate on interleaved stereo floats [L0 R0 L1 R1 …].
+    // AdaptiveBuffer's double-copy + memmove overhead is eliminated: we work
+    // directly on buffer.data() so zero extra memcpy is incurred per callback.
+    float* const buf = buffer.data();
 
     if (convolver_.GetEnable()) {
-        convolver_.Process(buffer.data(), buffer.data(), size);
+        convolver_.Process(buf, buf, size);
     }
     if (vhe_.GetEnable()) {
-        vhe_.Process(buffer.data(), buffer.data(), size);
+        vhe_.Process(buf, buf, size);
     }
 
-    if (adaptive_buffer_.PushFrames(buffer.data(), size)) {
-        adaptive_buffer_.SetBufferOffset(size);
-        tmp_buf      = adaptive_buffer_.GetBuffer();
-        tmp_buf_size = size;
-    } else {
-        adaptive_buffer_.FlushBuffer();
-        memset(buffer.data(), 0, size * 2 * sizeof(float));
-        return;
-    }
+    if (size != 0) {
+        viper_ddc_.Process(buf, size);
+        spectrum_extend_.Process(buf, size);
+        iir_filter_.Process(buf, size);
+        dynamic_eq_.Process(buf, size);
+        colorful_music_.Process(buf, size);
+        stereo_imager_.Process(buf, size);
+        diff_surround_.Process(buf, size);
+        playback_gain_.Process(buf, size);
+        multiband_compressor_.Process(buf, size);
+        fet_compressor_.Process(buf, size);
+        dynamic_system_.Process(buf, size);
+        tube_simulator_.Process(buf, size);
+        psychoacoustic_bass_.Process(buf, size);
+        viper_bass_.Process({buf, size * 2u});
+        viper_bass_mono_.Process({buf, size * 2u});
+        viper_clarity_.Process(buf, size);
+        cure_.Process(buf, size);
+        analog_x_.Process(buf, size);
+        reverberation_.Process(buf, size);
+        speaker_correction_.Process(buf, size);
+        lufs_targeting_.Process(buf, size);
 
-    if (tmp_buf_size != 0) {
-        viper_ddc_.Process(tmp_buf, tmp_buf_size);
-        spectrum_extend_.Process(tmp_buf, tmp_buf_size);
-        iir_filter_.Process(tmp_buf, tmp_buf_size);
-        dynamic_eq_.Process(tmp_buf, tmp_buf_size);
-        colorful_music_.Process(tmp_buf, tmp_buf_size);
-        stereo_imager_.Process(tmp_buf, tmp_buf_size);
-        diff_surround_.Process(tmp_buf, tmp_buf_size);
-        playback_gain_.Process(tmp_buf, tmp_buf_size);
-        multiband_compressor_.Process(tmp_buf, tmp_buf_size);
-        fet_compressor_.Process(tmp_buf, tmp_buf_size);
-        dynamic_system_.Process(tmp_buf, tmp_buf_size);
-        tube_simulator_.Process(tmp_buf, tmp_buf_size);
-        psychoacoustic_bass_.Process(tmp_buf, tmp_buf_size);
-        viper_bass_.Process({tmp_buf, tmp_buf_size * 2u});
-        viper_bass_mono_.Process({tmp_buf, tmp_buf_size * 2u});
-        viper_clarity_.Process(tmp_buf, tmp_buf_size);
-        cure_.Process(tmp_buf, tmp_buf_size);
-        analog_x_.Process(tmp_buf, tmp_buf_size);
-        reverberation_.Process(tmp_buf, tmp_buf_size);
-        speaker_correction_.Process(tmp_buf, tmp_buf_size);
-        lufs_targeting_.Process(tmp_buf, tmp_buf_size);
+        const uint32_t n2 = size * 2u;
 
-        if (frame_scale_ != 1.0) {
-            adaptive_buffer_.ScaleFrames(frame_scale_);
+        // ── 4. Master bus: scale + pan (inline, no AdaptiveBuffer copy) ───
+        if (frame_scale_ != 1.0f || left_pan_ < 1.0f || right_pan_ < 1.0f) {
+            const float gl = frame_scale_ * left_pan_;
+            const float gr = frame_scale_ * right_pan_;
+            for (uint32_t i = 0; i < n2; i += 2) {
+                buf[i]     *= gl;
+                buf[i + 1] *= gr;
+            }
         }
 
-        if (left_pan_ < 1.0 || right_pan_ < 1.0) {
-            adaptive_buffer_.PanFrames(left_pan_, right_pan_);
-        }
-
-        for (uint32_t i = 0; i < tmp_buf_size * 2; i += 2) {
-            tmp_buf[i] = software_limiters_[0].Process(tmp_buf[i]);
-            tmp_buf[i + 1] = software_limiters_[1].Process(tmp_buf[i + 1]);
-        }
-
-        if (!adaptive_buffer_.PopFrames(buffer.data(), tmp_buf_size)) {
-            adaptive_buffer_.FlushBuffer();
-            memset(buffer.data(), 0, size * 2 * sizeof(float));
-            return;
-        }
-
-        if (size <= tmp_buf_size) {
-            return;
+        // ── 5. True-peak limiter (per-sample, lookahead) ──────────────────
+        for (uint32_t i = 0; i < n2; i += 2) {
+            buf[i]     = software_limiters_[0].Process(buf[i]);
+            buf[i + 1] = software_limiters_[1].Process(buf[i + 1]);
         }
     }
-
-    memmove(
-        buffer.data() + (size - tmp_buf_size) * 2,
-        buffer.data(),
-        tmp_buf_size * 2 * sizeof(float)
-    );
-    memset(buffer.data(), 0, (size - tmp_buf_size) * 2 * sizeof(float));
 }
 
 void ViPER::DispatchRawParam(
@@ -978,6 +970,11 @@ void ViPER::DispatchRawParam(
             break;
         }
     }
+    // NOTE: DispatchRawParam() is a legacy raw-integer path that mutates effect
+    // objects directly from the IPC thread.  This is inherently racy with
+    // Process() for multi-word coefficient updates (e.g. biquad recalculation).
+    // Callers should migrate to ApplyParams(ViPERParams) which routes through
+    // param_exchange_ and eliminates the race entirely.
 }
 
 void ViPER::RequestEffectsReset() {
@@ -985,8 +982,6 @@ void ViPER::RequestEffectsReset() {
 }
 
 void ViPER::ResetAllEffects() {
-    adaptive_buffer_.FlushBuffer();
-
     convolver_.SetSamplingRate(sampling_rate_);
     convolver_.Reset();
 
@@ -1066,11 +1061,20 @@ void ViPER::RequestBuffersReset() {
 }
 
 void ViPER::ResetBuffers() {
-    adaptive_buffer_.FlushBuffer();
     reverberation_.Reset();
 }
 
+// Public API — called from the IPC/Binder thread.
+// Stages the snapshot for RT-thread consumption; does NOT touch effect objects.
 void ViPER::ApplyParams(const viper::ViPERParams &params) {
+    staged_params_ = params;
+    param_exchange_.Update(staged_params_);
+}
+
+// Private — called exclusively from Process() on the RT audio thread.
+// Applies any changed sub-structs to their effect objects using delta-checks
+// against last_applied_, then updates last_applied_.
+void ViPER::ApplyParamsToEffects(const viper::ViPERParams &params) {
     if (!(params.master_limiter == last_applied_.master_limiter)) {
         ApplyMasterLimiter(params.master_limiter);
     }
