@@ -3,8 +3,6 @@
 #include "../utils/MultiBiquad.h"
 #include <array>
 #include <cstdint>
-#include <vector>
-
 class StereoImager {
 public:
     static constexpr uint32_t kNumBands      = 3;
@@ -13,8 +11,10 @@ public:
     StereoImager();
 
     void Process(float *samples, uint32_t size) noexcept;
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetLowWidth(float value) noexcept;
     void SetMidWidth(float value) noexcept;
@@ -40,7 +40,10 @@ private:
     std::array<MultiBiquad, kNumCrossovers> highpass_ra_{};
     std::array<MultiBiquad, kNumCrossovers> highpass_rb_{};
 
-    std::array<std::vector<float>, kNumBands> band_buffers_{};
+    // Pre-allocated: eliminates RT-unsafe resize() in Process().
+    static constexpr uint32_t kMaxFrames = 4096u;
+    alignas(64) std::array<std::array<float, kMaxFrames * 2u>, kNumBands> band_buffers_{};
+    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 
     void ConfigureCrossovers() noexcept;
 };

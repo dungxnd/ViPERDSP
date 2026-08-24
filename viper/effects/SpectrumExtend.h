@@ -10,8 +10,10 @@ public:
     SpectrumExtend();
 
     void Process(float *samples, uint32_t size) noexcept;
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetExciter(float value) noexcept;
     void SetReferenceFrequency(uint32_t value) noexcept;
@@ -28,4 +30,5 @@ private:
     std::array<MultiBiquad, 2> highpass_{};
     std::array<MultiBiquad, 2> lowpass_{};
     std::array<Harmonic, 2>    harmonics_{};
+    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

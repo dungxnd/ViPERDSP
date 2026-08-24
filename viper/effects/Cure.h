@@ -2,13 +2,17 @@
 
 #include "../utils/Crossfeed.h"
 #include "../utils/PassFilter.h"
+#include <array>
 
 class Cure {
 public:
     Cure() = default;
 
     void Process(float *buffer, uint32_t size) noexcept;
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
+
+    [[nodiscard]] bool IsEnabled() const noexcept { return enabled_; }
 
     [[nodiscard]] uint32_t GetCutoff() const noexcept;
     [[nodiscard]] float GetFeedback() const noexcept;
@@ -26,4 +30,5 @@ private:
 
     Crossfeed crossfeed_{};
     PassFilter pass_filter_{};
+    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

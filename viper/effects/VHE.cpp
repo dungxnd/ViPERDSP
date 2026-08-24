@@ -77,6 +77,19 @@ uint32_t VHE::Process(const float* source, float* dest, const uint32_t frame_siz
     return frame_size;
 }
 
+void VHE::ProcessPlanar(
+    float* __restrict L, float* __restrict R, const uint32_t frame_size
+) noexcept {
+    if (!enable_ || !conv_left_.InstanceUsable() || !conv_right_.InstanceUsable()
+        || frame_size == 0) {
+        return;  // pass-through: planar buffers contain the unmodified input
+    }
+
+    // PConvZeroLatency::Process() operates on contiguous non-interleaved buffers.
+    conv_left_.Process(L, L, frame_size);
+    conv_right_.Process(R, R, frame_size);
+}
+
 void VHE::Reset() {
     conv_left_.UnloadKernel();
     conv_right_.UnloadKernel();

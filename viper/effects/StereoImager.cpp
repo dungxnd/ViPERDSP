@@ -9,12 +9,9 @@ StereoImager::StereoImager() {
 
 void StereoImager::Process(float *samples, const uint32_t size) noexcept {
     if (!enable_ || size == 0) return;
+    if (size > kMaxFrames) return;
 
     const uint32_t frame_count = size * 2;
-
-    for (auto& buf : band_buffers_) {
-        if (buf.size() < frame_count) buf.resize(frame_count);
-    }
 
     for (uint32_t b = 0; b < kNumBands; b++) {
         for (uint32_t i = 0; i < frame_count; i += 2) {
@@ -142,5 +139,19 @@ void StereoImager::ConfigureCrossovers() noexcept {
             f->RefreshFilter(MultiBiquad::HIGH_PASS, 1.0f, freq,
                              sampling_rate_, kButterworthQ, false);
         }
+    }
+}
+
+void StereoImager::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
+    if (!IsEnabled() || frames == 0) return;
+    const auto n = static_cast<uint32_t>(frames);
+    for (size_t i = 0; i < frames; ++i) {
+        pp_scratch_[2u * i]      = L[i];
+        pp_scratch_[2u * i + 1u] = R[i];
+    }
+    Process(pp_scratch_.data(), n);
+    for (size_t i = 0; i < frames; ++i) {
+        L[i] = pp_scratch_[2u * i];
+        R[i] = pp_scratch_[2u * i + 1u];
     }
 }

@@ -283,3 +283,16 @@ void DynamicEQ::RecalcAttackRelease(const uint32_t band) noexcept {
     state_[band].subblock_release_coeff = rel_sec > 0.0f
         ? 1.0f - std::exp(-K / (rel_sec * sr)) : 1.0f;
 }
+
+void DynamicEQ::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
+    if (!IsEnabled() || frames == 0) return;
+    for (size_t i = 0; i < frames; ++i) {
+        pp_scratch_[2u * i]      = L[i];
+        pp_scratch_[2u * i + 1u] = R[i];
+    }
+    Process(std::span<float>{pp_scratch_.data(), frames * 2u});
+    for (size_t i = 0; i < frames; ++i) {
+        L[i] = pp_scratch_[2u * i];
+        R[i] = pp_scratch_[2u * i + 1u];
+    }
+}

@@ -10,8 +10,10 @@ public:
     DiffSurround();
 
     void Process(float *samples, uint32_t size);
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset();
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable);
     void SetDelayTime(float value);
     void SetReverse(bool value);
@@ -31,4 +33,5 @@ private:
 
     std::array<WaveBuffer, 2> buffers_{WaveBuffer(1, 0x1000), WaveBuffer(1, 0x1000)};
     MultiBiquad lp_filter_{};
+    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

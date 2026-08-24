@@ -99,3 +99,17 @@ void AnalogX::SetProcessingModel(const int model) {
     const auto clamped = static_cast<std::size_t>(std::clamp(model, 0, 2));
     SetProcessingModel(static_cast<ProcessingModel>(clamped));
 }
+
+void AnalogX::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
+    if (!IsEnabled() || frames == 0) return;
+    const auto n = static_cast<uint32_t>(frames);
+    for (size_t i = 0; i < frames; ++i) {
+        pp_scratch_[2u * i]      = L[i];
+        pp_scratch_[2u * i + 1u] = R[i];
+    }
+    Process(pp_scratch_.data(), n);
+    for (size_t i = 0; i < frames; ++i) {
+        L[i] = pp_scratch_[2u * i];
+        R[i] = pp_scratch_[2u * i + 1u];
+    }
+}

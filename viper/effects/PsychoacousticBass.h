@@ -10,8 +10,10 @@ public:
     PsychoacousticBass();
 
     void Process(float* samples, uint32_t size) noexcept;
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetCutoff(uint32_t value) noexcept;
     void SetIntensity(uint32_t value) noexcept;
@@ -42,4 +44,5 @@ private:
     void RefreshFilters() noexcept;
     void ApplyHarmonicCoeffs() noexcept;
     void RefreshTimeConstants() noexcept;
+    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

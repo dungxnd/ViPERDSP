@@ -132,3 +132,16 @@ void IIRFilter::UpdateCoeffConstants() noexcept {
     gain_smooth_coeff_ = 1.0f - std::exp(-1.0f / (0.020f * sr_f));
     fade_in_step_      = 1.0f / (0.010f * sr_f);
 }
+
+void IIRFilter::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
+    if (!IsEnabled() || frames == 0) return;
+    for (size_t i = 0; i < frames; ++i) {
+        pp_scratch_[2u * i]      = L[i];
+        pp_scratch_[2u * i + 1u] = R[i];
+    }
+    Process(std::span<float>{pp_scratch_.data(), frames * 2u});
+    for (size_t i = 0; i < frames; ++i) {
+        L[i] = pp_scratch_[2u * i];
+        R[i] = pp_scratch_[2u * i + 1u];
+    }
+}

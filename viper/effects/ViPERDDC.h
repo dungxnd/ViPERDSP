@@ -9,8 +9,10 @@ public:
     ViPERDDC();
 
     void Process(float *samples, uint32_t size) noexcept;
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetCoeffs(
         uint32_t coeffs_size, const float *coeffs_44100, const float *coeffs_48000
@@ -36,4 +38,5 @@ private:
     std::vector<float> y2_r_;
 
     void ReleaseResources() noexcept;
+    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };

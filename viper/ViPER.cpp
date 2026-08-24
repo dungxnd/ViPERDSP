@@ -137,68 +137,60 @@ void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
     }
 
     // ── 2. Lock-free parameter ingestion (zero mutex overhead) ────────────
-    // The IPC/Binder thread stages updates via ApplyParams() → param_exchange_.
-    // We consume the latest snapshot here, on the RT thread, before touching
-    // any effect state — eliminating the control-plane / data-plane race.
     if (param_exchange_.HasPendingUpdate()) {
         ApplyParamsToEffects(param_exchange_.ReadLatest());
     }
 
     process_frame_count_ += size;
 
-    // ── 3. DSP chain — process in-place on the caller's buffer ────────────
-    // All effects operate on interleaved stereo floats [L0 R0 L1 R1 …].
-    // AdaptiveBuffer's double-copy + memmove overhead is eliminated: we work
-    // directly on buffer.data() so zero extra memcpy is incurred per callback.
-    float* const buf = buffer.data();
+    float* const raw_io = buffer.data();
 
-    if (convolver_.GetEnable()) {
-        convolver_.Process(buf, buf, size);
+    // ── 3. Ingress: single SIMD deinterleave [L0 R0 L1 R1…] → planar ─────
+    planar_context_.Deinterleave(raw_io, size);
+
+    float* __restrict L = planar_context_.left.data();
+    float* __restrict R = planar_context_.right.data();
+
+    // ── 4. Planar DSP chain — all effects receive contiguous L[] and R[] ──
+    // Convolver and VHE use zero-copy contiguous Process() via ProcessPlanar().
+    // All other effects use the pre-allocated pp_scratch_ shim — no heap alloc.
+    convolver_.ProcessPlanar(L, R, size);
+    vhe_.ProcessPlanar(L, R, size);
+    viper_ddc_.ProcessPlanar(L, R, size);
+    spectrum_extend_.ProcessPlanar(L, R, size);
+    iir_filter_.ProcessPlanar(L, R, size);
+    dynamic_eq_.ProcessPlanar(L, R, size);
+    colorful_music_.ProcessPlanar(L, R, size);
+    stereo_imager_.ProcessPlanar(L, R, size);
+    diff_surround_.ProcessPlanar(L, R, size);
+    playback_gain_.ProcessPlanar(L, R, size);
+    multiband_compressor_.ProcessPlanar(L, R, size);
+    fet_compressor_.ProcessPlanar(L, R, size);
+    dynamic_system_.ProcessPlanar(L, R, size);
+    tube_simulator_.ProcessPlanar(L, R, size);
+    psychoacoustic_bass_.ProcessPlanar(L, R, size);
+    viper_bass_.ProcessPlanar(L, R, size);
+    viper_bass_mono_.ProcessPlanar(L, R, size);
+    viper_clarity_.ProcessPlanar(L, R, size);
+    cure_.ProcessPlanar(L, R, size);
+    analog_x_.ProcessPlanar(L, R, size);
+    reverberation_.ProcessPlanar(L, R, size);
+    speaker_correction_.ProcessPlanar(L, R, size);
+    lufs_targeting_.ProcessPlanar(L, R, size);
+
+    // ── 5. Master bus: planar gain+pan (SIMD-friendly, no stride) ─────────
+    if (frame_scale_ != 1.0f || left_pan_ < 1.0f || right_pan_ < 1.0f) {
+        planar_context_.ApplyGainPan(frame_scale_, left_pan_, right_pan_);
     }
-    if (vhe_.GetEnable()) {
-        vhe_.Process(buf, buf, size);
-    }
 
-    if (size != 0) {
-        viper_ddc_.Process(buf, size);
-        spectrum_extend_.Process(buf, size);
-        iir_filter_.Process(buf, size);
-        dynamic_eq_.Process(buf, size);
-        colorful_music_.Process(buf, size);
-        stereo_imager_.Process(buf, size);
-        diff_surround_.Process(buf, size);
-        playback_gain_.Process(buf, size);
-        multiband_compressor_.Process(buf, size);
-        fet_compressor_.Process(buf, size);
-        dynamic_system_.Process(buf, size);
-        tube_simulator_.Process(buf, size);
-        psychoacoustic_bass_.Process(buf, size);
-        viper_bass_.Process({buf, size * 2u});
-        viper_bass_mono_.Process({buf, size * 2u});
-        viper_clarity_.Process(buf, size);
-        cure_.Process(buf, size);
-        analog_x_.Process(buf, size);
-        reverberation_.Process(buf, size);
-        speaker_correction_.Process(buf, size);
-        lufs_targeting_.Process(buf, size);
+    // ── 6. Egress: single SIMD interleave back to caller's buffer ─────────
+    planar_context_.Interleave(raw_io);
 
-        const uint32_t n2 = size * 2u;
-
-        // ── 4. Master bus: scale + pan (inline, no AdaptiveBuffer copy) ───
-        if (frame_scale_ != 1.0f || left_pan_ < 1.0f || right_pan_ < 1.0f) {
-            const float gl = frame_scale_ * left_pan_;
-            const float gr = frame_scale_ * right_pan_;
-            for (uint32_t i = 0; i < n2; i += 2) {
-                buf[i]     *= gl;
-                buf[i + 1] *= gr;
-            }
-        }
-
-        // ── 5. True-peak limiter (per-sample, lookahead) ──────────────────
-        for (uint32_t i = 0; i < n2; i += 2) {
-            buf[i]     = software_limiters_[0].Process(buf[i]);
-            buf[i + 1] = software_limiters_[1].Process(buf[i + 1]);
-        }
+    // ── 7. True-peak limiter (per-sample on interleaved output) ──────────
+    const uint32_t n2 = size * 2u;
+    for (uint32_t i = 0; i < n2; i += 2) {
+        raw_io[i]     = software_limiters_[0].Process(raw_io[i]);
+        raw_io[i + 1] = software_limiters_[1].Process(raw_io[i + 1]);
     }
 }
 

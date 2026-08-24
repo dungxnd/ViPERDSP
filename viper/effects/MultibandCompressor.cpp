@@ -21,15 +21,10 @@ MultibandCompressor::MultibandCompressor() {
 
 void MultibandCompressor::Process(float* const samples, const uint32_t size) noexcept {
     if (!enable_ || size == 0) return;
+    if (size > kMaxFrames) return;
 
     const uint32_t num_crossovers = band_count_ - 1;
     const uint32_t frame_count    = size * 2;
-
-    for (uint32_t b = 0; b < band_count_; ++b) {
-        if (band_buffers_[b].size() < frame_count) {
-            band_buffers_[b].resize(frame_count);
-        }
-    }
 
     for (uint32_t b = 0; b < band_count_; ++b) {
         for (uint32_t i = 0; i < frame_count; i += 2) {
@@ -233,5 +228,19 @@ void MultibandCompressor::ConfigureCrossovers() noexcept {
                 1.0f, crossover_freqs_[i], sampling_rate_, kButterworthQ, false
             );
         }
+    }
+}
+
+void MultibandCompressor::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
+    if (!IsEnabled() || frames == 0) return;
+    const auto n = static_cast<uint32_t>(frames);
+    for (size_t i = 0; i < frames; ++i) {
+        pp_scratch_[2u * i]      = L[i];
+        pp_scratch_[2u * i + 1u] = R[i];
+    }
+    Process(pp_scratch_.data(), n);
+    for (size_t i = 0; i < frames; ++i) {
+        L[i] = pp_scratch_[2u * i];
+        R[i] = pp_scratch_[2u * i + 1u];
     }
 }

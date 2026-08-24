@@ -13,6 +13,11 @@ public:
 
     uint32_t Process(const float *source, float *dest, uint32_t frame_size);
 
+    // Planar processing: L and R are separate contiguous arrays.
+    // Eliminates the ProcessInterleaved stride overhead.
+    void ProcessPlanar(float* __restrict L, float* __restrict R, uint32_t frame_size) noexcept;
+    [[nodiscard]] bool IsEnabled() const noexcept { return GetEnable(); }
+
     // Reloads HRIR kernels for the current (effect_level_, sampling_rate_) pair;
     // called automatically by SetEnable/SetEffectLevel/SetSamplingRate on change.
     void Reset();

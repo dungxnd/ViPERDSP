@@ -105,6 +105,33 @@ uint32_t Convolver::Process(
     return frame_size;
 }
 
+void Convolver::ProcessPlanar(
+    float* __restrict L, float* __restrict R, const uint32_t frame_size
+) noexcept {
+    // Kernel swap check is handled in the interleaved Process(); mirror it here.
+    ConsumeKernelSwap();
+
+    if (!enable_ || !kernel_ch1_->InstanceUsable() || !kernel_ch2_->InstanceUsable()
+        || frame_size == 0) {
+        return;  // pass-through: planar buffers already contain the input
+    }
+
+    // Direct contiguous convolution — no interleave/deinterleave overhead.
+    kernel_ch1_->Process(L, L, frame_size);
+    kernel_ch2_->Process(R, R, frame_size);
+
+    if (is_valid_cross_channel_) {
+        // Planar cross-channel blend: blend = lerp(L, R, cc) and vice-versa.
+        const float cc = cross_channel_;
+        for (uint32_t i = 0; i < frame_size; ++i) {
+            const float l = L[i];
+            const float r = R[i];
+            L[i] = l + (r - l) * cc;
+            R[i] = r + (l - r) * cc;
+        }
+    }
+}
+
 void Convolver::Reset() {
     if (kernel_ch1_) kernel_ch1_->Reset();
     if (kernel_ch2_) kernel_ch2_->Reset();

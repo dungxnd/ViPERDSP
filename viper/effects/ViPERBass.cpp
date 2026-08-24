@@ -276,3 +276,16 @@ void ViPERBass::SetSamplingRate(const uint32_t sampling_rate) noexcept {
         Reset();
     }
 }
+
+void ViPERBass::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
+    if (!IsEnabled() || frames == 0) return;
+    for (size_t i = 0; i < frames; ++i) {
+        pp_scratch_[2u * i]      = L[i];
+        pp_scratch_[2u * i + 1u] = R[i];
+    }
+    Process(std::span<float>{pp_scratch_.data(), frames * 2u});
+    for (size_t i = 0; i < frames; ++i) {
+        L[i] = pp_scratch_[2u * i];
+        R[i] = pp_scratch_[2u * i + 1u];
+    }
+}

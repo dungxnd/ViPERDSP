@@ -4,8 +4,6 @@
 #include "FETCompressor.h"
 #include <array>
 #include <cstdint>
-#include <vector>
-
 class MultibandCompressor {
 public:
     static constexpr uint32_t kMaxBands      = 5;
@@ -14,8 +12,10 @@ public:
     MultibandCompressor();
 
     void Process(float* samples, uint32_t size) noexcept;
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
     void SetBandCount(uint32_t count);
     void SetCrossoverFrequency(uint32_t index, float frequency) noexcept;
@@ -56,7 +56,11 @@ private:
     std::array<MultiBiquad, kMaxCrossovers> highpass_rb_;
 
     std::array<FETCompressor, kMaxBands>          compressors_;
-    std::array<std::vector<float>, kMaxBands>     band_buffers_;
+    // Pre-allocated interleaved band scratch (kMaxBands × 4096 stereo frames).
+    // Fixed size eliminates the RT-unsafe std::vector::resize() in Process().
+    static constexpr uint32_t kMaxFrames = 4096u;
+    alignas(64) std::array<std::array<float, kMaxFrames * 2u>, kMaxBands> band_buffers_{};
+    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 
     void ConfigureCrossovers() noexcept;
 };

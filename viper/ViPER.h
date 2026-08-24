@@ -7,6 +7,7 @@
 
 #include "ViPERParams.h"
 #include "core/AudioBlock.h"
+#include "core/AudioContext.h"
 #include "core/ParamExchange.h"
 #include "effects/AnalogX.h"
 #include "effects/ColorfulMusic.h"
@@ -137,9 +138,10 @@ private:
     // always sees a consistent full-state snapshot via param_exchange_.
     viper::ViPERParams staged_params_;
 
-    // Pre-allocated planar scratch block — used by effects that expose a
-    // ProcessPlanar() interface and for scale/pan in the master bus.
-    viper::core::PlanarAudioBlock<4096> planar_context_;
+    // Cache-aligned planar scratch block for the end-to-end SoA pipeline.
+    // ONE deinterleave at ingress, ONE interleave at egress; all effects run
+    // in the planar domain between those two passes.
+    viper::core::AudioProcessContext<4096> planar_context_;
 
     // Effects
     Convolver convolver_;

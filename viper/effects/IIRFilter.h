@@ -21,7 +21,10 @@ public:
         if (samples) Process(std::span<float>(samples, size * 2u));
     }
 
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
+
+    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
 
     void SetEnable(bool enable) noexcept;
     void SetBandCount(uint32_t bands);
@@ -70,4 +73,5 @@ private:
     MinPhaseIIRCoeffs min_phase_iir_coeffs_;
 
     void UpdateCoeffConstants() noexcept;  // updates gain_smooth_coeff_ + fade_in_step_
+    alignas(64) std::array<float, 4096u * 2u> pp_scratch_{};
 };
