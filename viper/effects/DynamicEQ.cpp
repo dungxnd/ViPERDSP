@@ -118,10 +118,12 @@ void DynamicEQ::FastUpdateBandCoeffs(const uint32_t band, const float gain_db) n
     float a0, a1, a2, b0, b1, b2;
 
     switch (p.filter_type) {
-        case 1: { // Low Shelf
+        case 1: { // Low Shelf — RBJ Q-parameterised (valid for all Q > 0)
+            // alpha = sin(w0) / (2*Q); S_term = 2*sqrt(A)*alpha
+            // This replaces the S-slope discriminant which collapses when Q > 1.
             const float sqrtA  = std::sqrt(A);
-            const float disc   = std::max((A + 1.0f / A) * (1.0f / p.q - 1.0f) + 2.0f, 0.0f);
-            const float S_term = sqrtA * 2.0f * (t.sin_w0 * 0.5f * std::sqrt(disc));
+            const float alpha  = t.sin_w0 / (2.0f * p.q);
+            const float S_term = 2.0f * sqrtA * alpha;
             a0 =  (A + 1.0f) + (A - 1.0f) * t.cos_w0 + S_term;
             a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * t.cos_w0);
             a2 =  (A + 1.0f) + (A - 1.0f) * t.cos_w0 - S_term;
@@ -130,10 +132,10 @@ void DynamicEQ::FastUpdateBandCoeffs(const uint32_t band, const float gain_db) n
             b2 =  A * ((A + 1.0f) - (A - 1.0f) * t.cos_w0 - S_term);
             break;
         }
-        case 2: { // High Shelf
+        case 2: { // High Shelf — RBJ Q-parameterised (valid for all Q > 0)
             const float sqrtA  = std::sqrt(A);
-            const float disc   = std::max((A + 1.0f / A) * (1.0f / p.q - 1.0f) + 2.0f, 0.0f);
-            const float S_term = sqrtA * 2.0f * (t.sin_w0 * 0.5f * std::sqrt(disc));
+            const float alpha  = t.sin_w0 / (2.0f * p.q);
+            const float S_term = 2.0f * sqrtA * alpha;
             a0 =  (A + 1.0f) - (A - 1.0f) * t.cos_w0 + S_term;
             a1 =  2.0f * ((A - 1.0f) - (A + 1.0f) * t.cos_w0);
             a2 =  (A + 1.0f) - (A - 1.0f) * t.cos_w0 - S_term;

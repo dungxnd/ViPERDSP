@@ -13,6 +13,7 @@ public:
 
     [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
     void SetEnable(bool enable) noexcept;
+    void SetSamplingRate(uint32_t sampling_rate) noexcept;
     void SetDamp(float value)     noexcept;
     void SetDry(float value)      noexcept;
     void SetRoomSize(float value) noexcept;

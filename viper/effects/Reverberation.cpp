@@ -27,6 +27,10 @@ void Reverberation::SetEnable(const bool enable) noexcept {
     }
 }
 
+void Reverberation::SetSamplingRate(const uint32_t sampling_rate) noexcept {
+    model_.SetSamplingRate(sampling_rate);
+}
+
 void Reverberation::SetDamp(const float value)     noexcept { model_.SetDamp(value); }
 void Reverberation::SetDry(const float value)      noexcept { model_.SetDry(value); }
 void Reverberation::SetRoomSize(const float value) noexcept { model_.SetRoomSize(value); }

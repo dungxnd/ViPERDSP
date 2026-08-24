@@ -630,6 +630,10 @@ void PConvNUPC::ExecuteStageSlice(Stage& stage, const uint32_t samples_advanced)
         stage.saved_ring_read_idx = ring_read_idx_;
         stage.slice_phase         = 1u;
         stage.phase_sample_count  = 0u;
+        // Do NOT accumulate samples_advanced on the boundary frame: the chunk
+        // that triggered Phase 1 belongs to the block that just completed, not
+        // to the new phase interval.  Accumulation resumes on the next call.
+        return;
     }
 
     // Advance phase counter.

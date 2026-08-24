@@ -70,7 +70,7 @@ void PlaybackGain::ProcessPlanar(float* __restrict L, float* __restrict R, const
 
     const uint32_t ramp_len = std::max(n, sampling_rate_ / 40u);
 
-    // Left channel
+    // Left channel — lower bound is 0: negative linear gain inverts phase.
     {
         double g = (target - current_gain_l_) / ramp_len;
         if (g >= 0.0) g *= 0.0625;
@@ -78,11 +78,11 @@ void PlaybackGain::ProcessPlanar(float* __restrict L, float* __restrict R, const
             L[i] *= current_gain_l_;
             current_gain_l_ = std::clamp(
                 current_gain_l_ + static_cast<float>(g),
-                -max_gain_factor_, max_gain_factor_
+                0.0f, max_gain_factor_
             );
         }
     }
-    // Right channel
+    // Right channel — lower bound is 0: negative linear gain inverts phase.
     {
         double g = (target - current_gain_r_) / ramp_len;
         if (g >= 0.0) g *= 0.0625;
@@ -90,7 +90,7 @@ void PlaybackGain::ProcessPlanar(float* __restrict L, float* __restrict R, const
             R[i] *= current_gain_r_;
             current_gain_r_ = std::clamp(
                 current_gain_r_ + static_cast<float>(g),
-                -max_gain_factor_, max_gain_factor_
+                0.0f, max_gain_factor_
             );
         }
     }
