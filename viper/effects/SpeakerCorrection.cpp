@@ -13,14 +13,14 @@ SpeakerCorrection::SpeakerCorrection() {
 //
 // Iterates directly over L[] and R[] (stride-1), eliminating the interleave
 // and deinterleave copies from the legacy shim.
-void SpeakerCorrection::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!enable_ || frames == 0) return;
+void SpeakerCorrection::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!enable_ || L.empty()) return;
 
     auto& lp_l = low_pass_[0];   auto& lp_r = low_pass_[1];
     auto& hp_l = high_pass_[0];  auto& hp_r = high_pass_[1];
     auto& bp_l = band_pass_[0];  auto& bp_r = band_pass_[1];
 
-    for (size_t i = 0; i < frames; ++i) {
+    for (size_t i = 0; i < L.size(); ++i) {
         double s_l = lp_l.ProcessSample(L[i]);
         s_l = hp_l.ProcessSample(s_l);
         s_l /= 2.0;

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/Harmonic.h"
 #include "../utils/MultiBiquad.h"
 #include <array>
@@ -12,7 +15,7 @@ public:
     AnalogX();
 
     // True planar in-place — no interleave/deinterleave, no scratch buffer.
-    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset();
 
     [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
@@ -26,8 +29,6 @@ private:
 
     ProcessingModel processing_model_ = ProcessingModel::Soft;
     uint32_t        sampling_rate_    = 44100;
-    uint32_t        freq_range_       = 0;
-
     float gain_ = 0.0f;
 
     std::array<MultiBiquad, 2> high_pass_;

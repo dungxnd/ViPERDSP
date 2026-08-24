@@ -43,8 +43,9 @@ void PlaybackGain::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     Reset();
 }
 
-void PlaybackGain::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
+void PlaybackGain::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+    const size_t frames = L.size();
 
     double tmp_l = 0.0, tmp_r = 0.0;
     for (size_t i = 0u; i < frames; ++i) {

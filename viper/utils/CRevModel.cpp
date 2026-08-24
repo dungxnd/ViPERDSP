@@ -86,6 +86,28 @@ void CRevModel::ProcessReplace(
     }
 }
 
+void CRevModel::ProcessPlanar(
+    float* __restrict L, float* __restrict R, const uint32_t frames
+) noexcept {
+    for (uint32_t f = 0; f < frames; ++f) {
+        float out_l = 0.0f;
+        float out_r = 0.0f;
+        const float input = (L[f] + R[f]) * gain_;
+
+        for (uint32_t i = 0; i < kNumCombs; ++i) {
+            out_l += comb_l_[i].Process(input);
+            out_r += comb_r_[i].Process(input);
+        }
+        for (uint32_t i = 0; i < kNumAllPass; ++i) {
+            out_l = allpass_l_[i].Process(out_l);
+            out_r = allpass_r_[i].Process(out_r);
+        }
+
+        L[f] = out_l * wet1_ + out_r * wet2_ + L[f] * dry_;
+        R[f] = out_r * wet1_ + out_l * wet2_ + R[f] * dry_;
+    }
+}
+
 void CRevModel::Mute() const noexcept {
     for (uint32_t i = 0; i < kNumCombs;   ++i) { comb_l_[i].Mute();    comb_r_[i].Mute(); }
     for (uint32_t i = 0; i < kNumAllPass; ++i) { allpass_l_[i].Mute(); allpass_r_[i].Mute(); }

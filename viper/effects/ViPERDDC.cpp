@@ -111,8 +111,8 @@ void ViPERDDC::ReleaseResources() noexcept {
     y2_l_.clear(); y2_r_.clear();
 }
 
-void ViPERDDC::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
+void ViPERDDC::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
     if (!set_coeffs_ok_ || arr_size_ == 0) return;
 
     const std::vector<std::array<float, 5>> *coeffs_arr = nullptr;
@@ -120,7 +120,7 @@ void ViPERDDC::ProcessPlanar(float* __restrict L, float* __restrict R, const siz
     else if (sampling_rate_ == 48000u) coeffs_arr = &coeffs_arr48000_;
     else return;
 
-    for (size_t f = 0; f < frames; ++f) {
+    for (size_t f = 0; f < L.size(); ++f) {
         float sl = L[f];
         float sr = R[f];
 

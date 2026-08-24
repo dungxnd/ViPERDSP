@@ -43,6 +43,11 @@ void FETCompressor::Reset() noexcept {
     running_peak_sq_     = kEpsilonSq;
     running_rms_sq_      = kEpsilonSq;
     adaptive_gain_state_ = 0.0f;
+
+    // Seed cached adaptive coefficients so the first block has valid values.
+    cached_att_coeff_    = attack_coeff_;
+    cached_rel_coeff_    = release_coeff_;
+    alpha_update_counter_ = 0u;
 }
 
 void FETCompressor::Process(float *samples, const uint32_t size) noexcept {
@@ -82,20 +87,25 @@ double FETCompressor::ProcessSidechain(const double in) noexcept {
     const float crest_ratio = std::max(running_peak_sq_ / (running_rms_sq_ + kEpsilonSq), 1.0f);
 
     // 2. Program-Dependent Dynamic Attack & Release
-    float cur_att_coeff   = attack_coeff_;
-    float cur_rel_coeff   = release_coeff_;
-    float adaptive_att_time = attack_time_sec_;
+    // Adaptive alpha is recomputed only every kAlphaUpdateInterval samples:
+    // crest factor varies at syllabic rates (~10-50 ms), so per-sample exp() is wasteful.
+    float cur_att_coeff   = cached_att_coeff_;
+    float cur_rel_coeff   = cached_rel_coeff_;
 
-    if (auto_attack_) {
-        adaptive_att_time = (2.0f * max_attack_time_) / crest_ratio;
-        cur_att_coeff = CalculateAlpha(sampling_rate_, adaptive_att_time);
-    }
-
-    if (auto_release_) {
-        const float adaptive_rel_time = std::max(
-            (2.0f * max_release_time_) / crest_ratio - adaptive_att_time, 0.001f
-        );
-        cur_rel_coeff = CalculateAlpha(sampling_rate_, adaptive_rel_time);
+    if ((auto_attack_ || auto_release_) && (alpha_update_counter_++ & (kAlphaUpdateInterval - 1u)) == 0u) {
+        float adaptive_att_time = attack_time_sec_;
+        if (auto_attack_) {
+            adaptive_att_time = (2.0f * max_attack_time_) / crest_ratio;
+            cached_att_coeff_ = CalculateAlpha(sampling_rate_, adaptive_att_time);
+        }
+        if (auto_release_) {
+            const float adaptive_rel_time = std::max(
+                (2.0f * max_release_time_) / crest_ratio - adaptive_att_time, 0.001f
+            );
+            cached_rel_coeff_ = CalculateAlpha(sampling_rate_, adaptive_rel_time);
+        }
+        cur_att_coeff = cached_att_coeff_;
+        cur_rel_coeff = cached_rel_coeff_;
     }
 
     // 3. Log-Domain Static Gain Computer (Giannoulis Eq. 4)
@@ -273,10 +283,10 @@ void FETCompressor::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     Reset();
 }
 
-void FETCompressor::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0u) return;
+void FETCompressor::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
 
-    for (size_t i = 0u; i < frames; ++i) {
+    for (size_t i = 0u; i < L.size(); ++i) {
         const double sidechain_in = std::max(
             std::abs(static_cast<double>(L[i])),
             std::abs(static_cast<double>(R[i]))

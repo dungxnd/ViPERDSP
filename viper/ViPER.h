@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <optional>
+#include <span>
 #include <tuple>
 #include <vector>
 
@@ -194,15 +195,15 @@ private:
     // Only enabled effects appear — zero dispatch overhead for disabled stages.
     struct PipelineStage {
         void* instance{nullptr};
-        void (*process_fn)(void* instance, float* L, float* R, size_t frames) noexcept {nullptr};
+        void (*process_fn)(void* instance, std::span<float> L, std::span<float> R) noexcept {nullptr};
     };
     static constexpr size_t kMaxPipelineStages = 24u;
     std::array<PipelineStage, kMaxPipelineStages> active_stages_{};
     size_t active_stage_count_{0u};
 
     template <typename T>
-    static void InvokeStage(void* inst, float* L, float* R, size_t frames) noexcept {
-        static_cast<T*>(inst)->ProcessPlanar(L, R, frames);
+    static void InvokeStage(void* inst, std::span<float> L, std::span<float> R) noexcept {
+        static_cast<T*>(inst)->ProcessPlanar(L, R);
     }
 
     template <typename T>

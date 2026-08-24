@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 class Stereo3DSurround {
@@ -7,6 +8,7 @@ public:
     Stereo3DSurround() noexcept;
 
     void Process(float* samples, uint32_t size) const noexcept;
+    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) const noexcept;
 
     void SetMiddleImage(float value) noexcept;
     void SetStereoWiden(float value) noexcept;

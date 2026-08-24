@@ -44,17 +44,8 @@ void ColorfulMusic::SetSamplingRate(const uint32_t sampling_rate) {
     }
 }
 
-void ColorfulMusic::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
-    const auto n = static_cast<uint32_t>(frames);
-    float* const sc = scratch_.data();
-    for (size_t i = 0; i < frames; ++i) {
-        sc[2u * i]      = L[i];
-        sc[2u * i + 1u] = R[i];
-    }
-    Process(sc, n);
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = sc[2u * i];
-        R[i] = sc[2u * i + 1u];
-    }
+void ColorfulMusic::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+    depth_surround_.ProcessPlanar(L.data(), R.data(), L.size());
+    stereo_3d_surround_.ProcessPlanar(L.data(), R.data(), L.size());
 }

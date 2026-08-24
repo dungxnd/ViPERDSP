@@ -152,10 +152,10 @@ void PsychoacousticBass::ApplyHarmonicCoeffs() noexcept {
     }
 }
 
-void PsychoacousticBass::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
+void PsychoacousticBass::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
 
-    for (size_t i = 0u; i < frames; ++i) {
+    for (size_t i = 0u; i < L.size(); ++i) {
         const double bass_l = lowpass_[0].ProcessSample(L[i]);
         const double bass_r = lowpass_[1].ProcessSample(R[i]);
 

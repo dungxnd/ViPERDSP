@@ -51,16 +51,16 @@ void ViPERBass::ApplyAntiPop(float& bass_l, float& bass_r) noexcept {
     anti_pop_ = std::min(anti_pop_ + anti_pop_step_, 1.0f);
 }
 
-void ViPERBass::ProcessNaturalBass(StereoView audio) noexcept {
-    for (size_t f = 0; f < audio.extent(0); ++f) {
+void ViPERBass::ProcessNaturalBass(float* const L, float* const R, const size_t frames) noexcept {
+    for (size_t f = 0; f < frames; ++f) {
         bass_factor_smoothed_ +=
             (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
-        float bass_l = static_cast<float>(biquad_[0].ProcessSample(audio[f, 0]))
+        float bass_l = static_cast<float>(biquad_[0].ProcessSample(L[f]))
                        * bass_factor_smoothed_;
-        float bass_r = static_cast<float>(biquad_[1].ProcessSample(audio[f, 1]))
+        float bass_r = static_cast<float>(biquad_[1].ProcessSample(R[f]))
                        * bass_factor_smoothed_;
         ApplyAntiPop(bass_l, bass_r);
-        ShapeMix(audio[f, 0], audio[f, 1], bass_l, bass_r);
+        ShapeMix(L[f], R[f], bass_l, bass_r);
     }
 }
 
@@ -80,77 +80,53 @@ void ViPERBass::ProcessNaturalBass(StereoView audio) noexcept {
 //   Only the non-linear harmonic increment (SoftClip(boosted) - bass_linear) is DC-blocked
 //   and injected.  The linear bass and dry paths combine as Dry = High + Bass without any
 //   phase-shifted component in the direct path — no comb-filter dip at the crossover.
-void ViPERBass::ProcessPureBassPlus(StereoView audio) noexcept {
-    const size_t frames = audio.extent(0);
+void ViPERBass::ProcessPureBassPlus(float* const L, float* const R, const size_t frames) noexcept {
+    // scratch_buffer_ layout (planar):
+    //   [0  ..   f-1]: fir_l — FIR output, left channel
+    //   [f  .. 2f-1]: fir_r — FIR output, right channel
+    //   [2f .. 3f-1]: dry_l — delayed dry, left channel
+    //   [3f .. 4f-1]: dry_r — delayed dry, right channel
+    float* const fir_l = scratch_buffer_.data();
+    float* const fir_r = scratch_buffer_.data() + frames;
+    float* const dry_l = scratch_buffer_.data() + frames * 2u;
+    float* const dry_r = scratch_buffer_.data() + frames * 3u;
 
-    // scratch_buffer_ layout:
-    //   [0  .. 2f-1]: fir_buf — raw stereo input/output for the linear-phase FIR
-    //   [2f .. 4f-1]: dry_buf — clean dry stereo delayed by kLatency frames
-    // Total: 4 * frames.  Pre-sized to 4096 * 4 in ctor / SetSamplingRate().
-    float* const fir_buf = scratch_buffer_.data();                 // [0  .. 2f-1]
-    float* const dry_buf = scratch_buffer_.data() + frames * 2u;  // [2f .. 4f-1]
-
-    // ── Step 1: delay raw stereo dry by kLatency, feed raw audio to FIR ──────
+    // ── Step 1: delay raw dry by kLatency, snapshot input for FIR ─────────────
     for (size_t f = 0; f < frames; ++f) {
-        // Store raw dry input in ring delay; read back kLatency samples ago.
-        bass_delay_[0][delay_write_idx_] = audio[f, 0];
-        bass_delay_[1][delay_write_idx_] = audio[f, 1];
+        bass_delay_[0][delay_write_idx_] = L[f];
+        bass_delay_[1][delay_write_idx_] = R[f];
 
         const size_t read_idx = (delay_write_idx_ - Polyphase::kLatency) & kDelayMask;
         delay_write_idx_ = (delay_write_idx_ + 1u) & kDelayMask;
 
-        dry_buf[f * 2u]      = bass_delay_[0][read_idx];
-        dry_buf[f * 2u + 1u] = bass_delay_[1][read_idx];
+        dry_l[f] = bass_delay_[0][read_idx];
+        dry_r[f] = bass_delay_[1][read_idx];
 
-        // Feed the raw (unfiltered) stereo signal to the FIR.
-        // No IIR pre-filter: the linear-phase FIR is the sole frequency-selective
-        // element, so group delay is constant (31 samples) at all frequencies.
-        fir_buf[f * 2u]      = audio[f, 0];
-        fir_buf[f * 2u + 1u] = audio[f, 1];
+        fir_l[f] = L[f];
+        fir_r[f] = R[f];
     }
 
-    // ── Step 2: linear-phase FIR extracts Bass[n-31] (group delay = 31) ──────
-    polyphase_.Process(fir_buf, static_cast<uint32_t>(frames));
+    // ── Step 2: linear-phase FIR lowpass — planar, no interleave bounce ───────
+    polyphase_.ProcessPlanar(fir_l, fir_r, fir_l, fir_r, frames);
 
-    // ── Step 3: transparent saturation blend — DC-block only the boost delta ─
-    //
-    // The previous approach called ShapeMix(high, boosted), which DC-blocked the
-    // entire boosted bass signal before adding it to `high`.  At factor=0 this
-    // caused a spurious phase lead from the DC blocker on the linear bass path:
-    //
-    //   output = (Dry - Bass) + DCBlock(SoftClip(Bass))
-    //          = Dry + (DCBlock(SoftClip(Bass)) - Bass)   ← phase-shifted residual ≠ 0
-    //
-    // The corrected formulation isolates only the non-linear harmonic increment:
-    //
-    //   boost_delta = SoftClip(boosted) - bass_linear        ← zero at unity gain
-    //   output      = Dry[n-31] + DCBlock(boost_delta)       ← exact identity at factor=0
+    // ── Step 3: transparent saturation blend ─────────────────────────────────
     for (size_t f = 0; f < frames; ++f) {
         bass_factor_smoothed_ +=
             (bass_factor_ - bass_factor_smoothed_) * smoothing_coeff_;
 
-        const float dry_l = dry_buf[f * 2u];
-        const float dry_r = dry_buf[f * 2u + 1u];
+        const float bass_linear_l = fir_l[f];
+        const float bass_linear_r = fir_r[f];
 
-        const float bass_linear_l = fir_buf[f * 2u];
-        const float bass_linear_r = fir_buf[f * 2u + 1u];
-
-        // Boosted bass: (1 + factor) so factor=0 → unity (bass_linear unchanged).
         float boosted_l = bass_linear_l * (1.0f + bass_factor_smoothed_);
         float boosted_r = bass_linear_r * (1.0f + bass_factor_smoothed_);
         ApplyAntiPop(boosted_l, boosted_r);
 
-        // Soft-clip only the boosted bass; subtract the original linear component
-        // to isolate just the saturation / harmonic-boost increment.
         const float shaped_l = BassSoftClip(boosted_l, 0.8f);
         const float shaped_r = BassSoftClip(boosted_r, 0.8f);
 
         const float boost_delta_l = shaped_l - bass_linear_l;
         const float boost_delta_r = shaped_r - bass_linear_r;
 
-        // DC-block only the isolated non-linear delta so that any DC component
-        // introduced by asymmetric saturation is removed without touching the
-        // dry signal or the linear bass reconstruction path.
         const float dc_blocked_delta_l =
             dc_block_coeff_ * (dc_y1_[0] + boost_delta_l - dc_x1_[0]);
         dc_x1_[0] = boost_delta_l;
@@ -161,10 +137,8 @@ void ViPERBass::ProcessPureBassPlus(StereoView audio) noexcept {
         dc_x1_[1] = boost_delta_r;
         dc_y1_[1] = dc_blocked_delta_r;
 
-        // Perfect reconstruction: Dry[n-31] + harmonic boost only.
-        // At factor=0: boost_delta≈0 → output≡Dry[n-31], zero phase error.
-        audio[f, 0] = dry_l + dc_blocked_delta_l;
-        audio[f, 1] = dry_r + dc_blocked_delta_r;
+        L[f] = dry_l[f] + dc_blocked_delta_l;
+        R[f] = dry_r[f] + dc_blocked_delta_r;
     }
 }
 
@@ -193,12 +167,29 @@ void ViPERBass::Process(std::span<float> samples) noexcept {
     const size_t size = samples.size();
     [[assume(size % 2 == 0)]];
 
-    StereoView audio(samples.data(), size / 2, 2u);
+    const size_t frames = size / 2u;
+    StereoView audio(samples.data(), frames, 2u);
+
+    // Deinterleave once for the Natural/PureBassPlus planar paths.
+    // scratch_buffer_ is 4096*4 floats; use the back half ([4f..6f-1]) for staging
+    // so ProcessPureBassPlus can still use [0..4f-1] for its fir/dry scratch.
+    float* const pl = scratch_buffer_.data() + frames * 4u;
+    float* const pr = pl + frames;
 
     using enum ProcessMode;
     switch (process_mode_) {
-        case NaturalBass:  ProcessNaturalBass (audio);          break;
-        case PureBassPlus: ProcessPureBassPlus(audio);          break;
+        case NaturalBass: {
+            for (size_t f = 0; f < frames; ++f) { pl[f] = samples[f*2u]; pr[f] = samples[f*2u+1u]; }
+            ProcessNaturalBass(pl, pr, frames);
+            for (size_t f = 0; f < frames; ++f) { samples[f*2u] = pl[f]; samples[f*2u+1u] = pr[f]; }
+            break;
+        }
+        case PureBassPlus: {
+            for (size_t f = 0; f < frames; ++f) { pl[f] = samples[f*2u]; pr[f] = samples[f*2u+1u]; }
+            ProcessPureBassPlus(pl, pr, frames);
+            for (size_t f = 0; f < frames; ++f) { samples[f*2u] = pl[f]; samples[f*2u+1u] = pr[f]; }
+            break;
+        }
         case Subwoofer:    ProcessSubwoofer   (samples, audio); break;
         default:           return; // guard against corrupt IPC value
     }
@@ -272,21 +263,38 @@ void ViPERBass::SetAntiPop(const bool enable) noexcept {
 void ViPERBass::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     if (sampling_rate_ != sampling_rate) {
         sampling_rate_ = sampling_rate;
-        scratch_buffer_.resize(4096u * 4u);
+        scratch_buffer_.resize(4096u * 6u);
         Reset();
     }
 }
 
-void ViPERBass::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
-    float* const sc = planar_scratch_.data();
-    for (size_t i = 0; i < frames; ++i) {
-        sc[2u * i]      = L[i];
-        sc[2u * i + 1u] = R[i];
-    }
-    Process(std::span<float>{sc, frames * 2u});
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = sc[2u * i];
-        R[i] = sc[2u * i + 1u];
+void ViPERBass::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+    const size_t frames = L.size();
+
+    using enum ProcessMode;
+    switch (process_mode_) {
+        case NaturalBass:
+            ProcessNaturalBass(L.data(), R.data(), frames);
+            break;
+        case PureBassPlus:
+            ProcessPureBassPlus(L.data(), R.data(), frames);
+            break;
+        case Subwoofer: {
+            // Subwoofer::Process() takes interleaved — bounce through scratch_buffer_.
+            float* const sc = scratch_buffer_.data();
+            for (size_t i = 0; i < frames; ++i) {
+                sc[2u * i]      = L[i];
+                sc[2u * i + 1u] = R[i];
+            }
+            const StereoView audio(sc, frames, 2u);
+            ProcessSubwoofer(std::span<float>{sc, frames * 2u}, audio);
+            for (size_t i = 0; i < frames; ++i) {
+                L[i] = sc[2u * i];
+                R[i] = sc[2u * i + 1u];
+            }
+            break;
+        }
+        default: return;
     }
 }

@@ -133,12 +133,12 @@ void IIRFilter::UpdateCoeffConstants() noexcept {
     fade_in_step_      = 1.0f / (0.010f * sr_f);
 }
 
-void IIRFilter::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || bands_ == 0 || frames == 0) return;
+void IIRFilter::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || bands_ == 0 || L.empty()) return;
     const auto coeffs = min_phase_iir_coeffs_.GetCoefficients();
     if (coeffs.empty()) return;
 
-    for (size_t f = 0; f < frames; ++f) {
+    for (size_t f = 0; f < L.size(); ++f) {
         if (gains_dirty_) [[unlikely]] {
             bool still_moving = false;
             for (uint32_t k = 0; k < bands_; ++k) {

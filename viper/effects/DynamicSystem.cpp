@@ -53,16 +53,16 @@ void DynamicSystem::SetYCoeffs(const int low, const int high) noexcept {
         static_cast<uint32_t>(y_low_), static_cast<uint32_t>(y_high_));
 }
 
-void DynamicSystem::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
-    const auto n = static_cast<uint32_t>(frames);
+void DynamicSystem::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+    const auto n = static_cast<uint32_t>(L.size());
     float* const sc = scratch_.data();
-    for (size_t i = 0; i < frames; ++i) {
+    for (size_t i = 0; i < L.size(); ++i) {
         sc[2u * i]      = L[i];
         sc[2u * i + 1u] = R[i];
     }
     Process(sc, n);
-    for (size_t i = 0; i < frames; ++i) {
+    for (size_t i = 0; i < L.size(); ++i) {
         L[i] = sc[2u * i];
         R[i] = sc[2u * i + 1u];
     }

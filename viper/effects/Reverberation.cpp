@@ -37,17 +37,9 @@ void Reverberation::SetRoomSize(const float value) noexcept { model_.SetRoomSize
 void Reverberation::SetWet(const float value)      noexcept { model_.SetWet(value); }
 void Reverberation::SetWidth(const float value)    noexcept { model_.SetWidth(value); }
 
-void Reverberation::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
-    const auto n = static_cast<uint32_t>(frames);
-    float* const sc = scratch_.data();
-    for (size_t i = 0; i < frames; ++i) {
-        sc[2u * i]      = L[i];
-        sc[2u * i + 1u] = R[i];
-    }
-    Process(sc, n);
-    for (size_t i = 0; i < frames; ++i) {
-        L[i] = sc[2u * i];
-        R[i] = sc[2u * i + 1u];
-    }
+void Reverberation::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+    // CRevModel::ProcessPlanar operates stride-1 on contiguous L/R arrays —
+    // zero interleave copies, full auto-vectorization of the comb/allpass banks.
+    model_.ProcessPlanar(L.data(), R.data(), static_cast<uint32_t>(L.size()));
 }

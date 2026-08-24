@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/Crossfeed.h"
 #include "../utils/PassFilter.h"
 #include <array>
@@ -8,7 +11,7 @@ class Cure {
 public:
     Cure() = default;
 
-    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
     [[nodiscard]] bool IsEnabled() const noexcept { return enabled_; }
@@ -25,11 +28,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    void Process(float *buffer, uint32_t size) noexcept;
-
     bool enabled_{false};
 
     Crossfeed crossfeed_{};
     PassFilter pass_filter_{};
-    alignas(64) std::array<float, 4096u * 2u> scratch_{};
 };

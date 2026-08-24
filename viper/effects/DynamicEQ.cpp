@@ -286,8 +286,9 @@ void DynamicEQ::RecalcAttackRelease(const uint32_t band) noexcept {
         ? 1.0f - std::exp(-K / (rel_sec * sr)) : 1.0f;
 }
 
-void DynamicEQ::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!enable_ || band_count_ == 0u || frames == 0) return;
+void DynamicEQ::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!enable_ || band_count_ == 0u || L.empty()) return;
+    const size_t frames = L.size();
 
     for (uint32_t b = 0u; b < band_count_; ++b) {
         const auto& p = params_[b];

@@ -17,6 +17,9 @@ public:
     CRevModel& operator=(CRevModel&&)      = default;
 
     void ProcessReplace(float* buf_l, float* buf_r, uint32_t size) noexcept;
+    // Native planar variant — stride-1, no interleave overhead.
+    // Reverberation::ProcessPlanar calls this directly.
+    void ProcessPlanar(float* __restrict L, float* __restrict R, uint32_t frames) noexcept;
     void Mute()  const noexcept;
     void Reset() const noexcept;
 

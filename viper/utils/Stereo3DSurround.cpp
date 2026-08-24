@@ -28,6 +28,21 @@ void Stereo3DSurround::Process(float* const samples, const uint32_t size) const 
     }
 }
 
+
+void Stereo3DSurround::ProcessPlanar(float* __restrict L, float* __restrict R,
+                                      const size_t frames) const noexcept {
+#pragma clang loop vectorize(enable)
+    for (size_t i = 0; i < frames; ++i) {
+        const float in_l = L[i];
+        const float in_r = R[i];
+        const float a    = coeff_left_  * (in_l + in_r);
+        const float b    = coeff_right_ * (in_r - in_l);
+        L[i] = a - b;
+        R[i] = a + b;
+    }
+}
+
+
 void Stereo3DSurround::SetMiddleImage(const float value) noexcept {
     middle_image_ = value;
     ConfigureVariables();

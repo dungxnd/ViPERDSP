@@ -19,6 +19,15 @@ void PassFilter::ProcessFrames(float *buffer, const uint32_t size) noexcept {
     }
 }
 
+void PassFilter::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
+    for (size_t x = 0; x < frames; ++x) {
+        L[x] = FilterLH(filters_[2], L[x]);
+        L[x] = FilterLH(filters_[0], L[x]);
+        R[x] = FilterLH(filters_[3], R[x]);
+        R[x] = FilterLH(filters_[1], R[x]);
+    }
+}
+
 void PassFilter::Reset() noexcept {
     const float cutoff = (sampling_rate_ < 44100)
         ? static_cast<float>(sampling_rate_) - 100.0f

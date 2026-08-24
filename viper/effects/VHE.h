@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/PConvZeroLatency.h"
 #include <cstdint>
 
@@ -15,7 +18,7 @@ public:
 
     // Planar processing: L and R are separate contiguous arrays.
     // Eliminates the ProcessInterleaved stride overhead.
-    void ProcessPlanar(float* __restrict L, float* __restrict R, uint32_t frame_size) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     [[nodiscard]] bool IsEnabled() const noexcept { return GetEnable(); }
 
     // Reloads HRIR kernels for the current (effect_level_, sampling_rate_) pair;

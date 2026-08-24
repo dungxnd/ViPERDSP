@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/CRevModel.h"
 #include <array>
 #include <cstdint>
@@ -8,7 +11,7 @@ class Reverberation {
 public:
     Reverberation();
 
-    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
     [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
@@ -25,5 +28,4 @@ private:
 
     bool      enable_{false};
     CRevModel model_;
-    alignas(64) std::array<float, 4096u * 2u> scratch_{};
 };

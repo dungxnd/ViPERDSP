@@ -12,6 +12,24 @@ void Crossfeed::ProcessFrames(float *buffer, const uint32_t size) noexcept {
     }
 }
 
+void Crossfeed::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
+    for (size_t i = 0; i < frames; ++i) {
+        const float in_l = L[i];
+        const float in_r = R[i];
+
+        lfs_.lo[0] = ApplyLoFilter(in_l, lfs_.lo[0]);
+        lfs_.lo[1] = ApplyLoFilter(in_r, lfs_.lo[1]);
+
+        lfs_.hi[0] = ApplyHiFilter(in_l, lfs_.asis[0], lfs_.hi[0]);
+        lfs_.hi[1] = ApplyHiFilter(in_r, lfs_.asis[1], lfs_.hi[1]);
+        lfs_.asis[0] = in_l;
+        lfs_.asis[1] = in_r;
+
+        L[i] = (lfs_.hi[0] + lfs_.lo[1]) * gain_;
+        R[i] = (lfs_.hi[1] + lfs_.lo[0]) * gain_;
+    }
+}
+
 void Crossfeed::Reset() noexcept {
     const uint32_t cutoff = preset_.cutoff;
     const double level = preset_.feedback / 10.0;

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include <array>
 #include <cstdint>
 
@@ -9,7 +12,7 @@ public:
 
     // Main stereo interleaved processing: [L0, R0, L1, R1, ...]
     void Process(float *samples, uint32_t size) noexcept;
-    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
     // Enable / Disable
@@ -109,4 +112,10 @@ private:
     float knee_multi_{2.0f};
     float adapt_coeff_{0.0f};
     float adaptive_gain_state_{0.0f};
+
+    // Sub-block adaptive ballistics cache (updated every kAlphaUpdateInterval samples)
+    static constexpr uint32_t kAlphaUpdateInterval = 16u;
+    uint32_t alpha_update_counter_{0u};
+    float    cached_att_coeff_{0.0f};
+    float    cached_rel_coeff_{0.0f};
 };

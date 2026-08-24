@@ -27,11 +27,10 @@ private:
     float target_gain_{1.0f};
     float gain_envelope_{1.0f};
     float smoothed_gain_{1.0f};
-    // One-pole coefficients: 1 − exp(−1 / (τ · fs)).
-    // Attack: fast (5 ms) — ramps gain down over the 256-sample lookahead horizon.
+    // One-pole release coefficient: 1 − exp(−1 / (τ · fs)).
+    // Attack is instantaneous (lookahead guarantees gain reaches target before the peak).
     // Release: slow (80 ms) — exponential recovery after the transient.
-    // Both initialised for 48 kHz; recomputed by SetSamplingRate().
-    float attack_coeff_{0.0f};
+    // Initialised for 48 kHz; recomputed by SetSamplingRate().
     float release_coeff_{0.0f};
     std::array<float, 256> arr256_{};
     std::array<float, 512> arr512_{};

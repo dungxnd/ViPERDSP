@@ -3,7 +3,6 @@
 #include <algorithm>
 
 static constexpr uint32_t kLookahead     = 256;
-static constexpr float    kAttackTauSec  = 0.005f;  // 5 ms attack (ramp down over lookahead)
 static constexpr float    kReleaseTauSec = 0.080f;  // 80 ms release time constant
 static constexpr float    kDenormFix     = 1e-25f;
 
@@ -33,9 +32,10 @@ float SoftwareLimiter::Process(float sample) noexcept {
     const float window_peak = arr512_[1];
     const float target_gain = (window_peak > gate_) ? (gate_ / window_peak) : 1.0f;
 
-    // 3. Ballistic gain computer: fast attack (ramp down), slow release (exponential up).
+    // 3. Ballistic gain computer: instantaneous attack (lookahead guarantees gain is
+    //    already reduced before the peak arrives), exponential release.
     if (target_gain < gain_envelope_) {
-        gain_envelope_ += attack_coeff_  * (target_gain - gain_envelope_);
+        gain_envelope_ = target_gain;
     } else {
         gain_envelope_ += release_coeff_ * (target_gain - gain_envelope_) + kDenormFix;
     }
@@ -73,9 +73,6 @@ void SoftwareLimiter::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     // Guard against divide-by-zero for pathological rates; clamp to 1 Hz minimum.
     const uint32_t fs = sampling_rate > 0u ? sampling_rate : 1u;
     sampling_rate_ = fs;
-    // One-pole coefficient for a first-order IIR with time constant τ:
-    //   c = 1 − exp(−1 / (τ · fs))
-    const float ffs = static_cast<float>(fs);
-    attack_coeff_  = 1.0f - std::exp(-1.0f / (kAttackTauSec  * ffs));
-    release_coeff_ = 1.0f - std::exp(-1.0f / (kReleaseTauSec * ffs));
+    // One-pole release coefficient: c = 1 − exp(−1 / (τ · fs))
+    release_coeff_ = 1.0f - std::exp(-1.0f / (kReleaseTauSec * static_cast<float>(fs)));
 }

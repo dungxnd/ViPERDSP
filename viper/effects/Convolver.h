@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/PConvNUPC.h"
 #include <atomic>
 #include <cstdint>
@@ -40,7 +43,7 @@ public:
     // Planar processing: eliminates ProcessInterleaved stride overhead.
     // L and R are separate contiguous float arrays of `frame_size` samples.
     // Called from ViPER::Process() after deinterleave.
-    void ProcessPlanar(float* __restrict L, float* __restrict R, uint32_t frame_size) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
 
     // Resets runtime state of the active kernels (clears delay lines).
     void Reset();

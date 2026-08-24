@@ -18,7 +18,7 @@ public:
 
     ViPERBass();
 
-    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
     [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
@@ -66,11 +66,10 @@ private:
     // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend and
     // ProcessPureBassPlus mid/high FIR pass.  Sized in ctor / SetSamplingRate().
     std::vector<float> scratch_buffer_;
-    alignas(64) std::array<float, 4096u * 2u> planar_scratch_{};
 
     void ShapeMix(float& left, float& right, float bass_l, float bass_r) noexcept;
     void ApplyAntiPop(float& bass_l, float& bass_r) noexcept;
-    void ProcessNaturalBass (StereoView audio) noexcept;
-    void ProcessPureBassPlus(StereoView audio) noexcept;
+    void ProcessNaturalBass (float* L, float* R, size_t frames) noexcept;
+    void ProcessPureBassPlus(float* L, float* R, size_t frames) noexcept;
     void ProcessSubwoofer   (std::span<float> samples, StereoView audio) noexcept;
 };

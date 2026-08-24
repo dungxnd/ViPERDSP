@@ -15,28 +15,25 @@ void StereoImager::Process(float *samples, const uint32_t size) noexcept {
             scratch_l_[f] = samples[f * 2u];
             scratch_r_[f] = samples[f * 2u + 1u];
         }
-        // Block crossover filter for band b
+        // Block crossover filter for band b (in-place on scratch)
         crossover_.ProcessBand(b, kNumBands, scratch_l_.data(), scratch_r_.data(), size);
-        // Apply stereo width and re-interleave into band_buffers_[b]
+        // Apply stereo width; accumulate directly into output — no band_buffers_
         const float w = band_widths_[b];
-        for (uint32_t f = 0; f < size; ++f) {
-            const float fl   = scratch_l_[f];
-            const float fr   = scratch_r_[f];
-            const float mid  = (fl + fr) * 0.5f;
-            const float side = (fl - fr) * 0.5f * w;
-            band_buffers_[b][f * 2u]      = mid + side;
-            band_buffers_[b][f * 2u + 1u] = mid - side;
+        if (b == 0u) {
+            for (uint32_t f = 0; f < size; ++f) {
+                const float mid  = (scratch_l_[f] + scratch_r_[f]) * 0.5f;
+                const float side = (scratch_l_[f] - scratch_r_[f]) * 0.5f * w;
+                samples[f * 2u]      = mid + side;
+                samples[f * 2u + 1u] = mid - side;
+            }
+        } else {
+            for (uint32_t f = 0; f < size; ++f) {
+                const float mid  = (scratch_l_[f] + scratch_r_[f]) * 0.5f;
+                const float side = (scratch_l_[f] - scratch_r_[f]) * 0.5f * w;
+                samples[f * 2u]      += mid + side;
+                samples[f * 2u + 1u] += mid - side;
+            }
         }
-    }
-
-    for (uint32_t i = 0; i < size * 2u; i += 2) {
-        float sum_l = 0.0f, sum_r = 0.0f;
-        for (uint32_t b = 0; b < kNumBands; ++b) {
-            sum_l += band_buffers_[b][i];
-            sum_r += band_buffers_[b][i + 1];
-        }
-        samples[i]     = sum_l;
-        samples[i + 1] = sum_r;
     }
 }
 
@@ -89,38 +86,37 @@ void StereoImager::ConfigureCrossovers() noexcept {
     crossover_.Configure(crossover_freqs_.data(), kNumCrossovers, sampling_rate_);
 }
 
-void StereoImager::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0u) return;
-    if (frames > kMaxFrames) return;
+void StereoImager::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
+    if (L.size() > kMaxFrames) return;
 
-    const auto size = static_cast<uint32_t>(frames);
+    const auto size = static_cast<uint32_t>(L.size());
 
     for (uint32_t b = 0u; b < kNumBands; ++b) {
-        // scratch_l_/scratch_r_ already planar — copy L/R directly
+        // Copy L/R into planar scratch — crossover filters the scratch in-place
         for (uint32_t f = 0u; f < size; ++f) {
             scratch_l_[f] = L[f];
             scratch_r_[f] = R[f];
         }
-        crossover_.ProcessBand(b, kNumBands, scratch_l_.data(), scratch_r_.data(), frames);
-        // Apply stereo width and store interleaved into band_buffers_[b]
+        crossover_.ProcessBand(b, kNumBands, scratch_l_.data(), scratch_r_.data(), size);
+        // Apply stereo width; accumulate directly into L/R — no band_buffers_
         const float w = band_widths_[b];
-        for (uint32_t f = 0u; f < size; ++f) {
-            const float fl   = scratch_l_[f];
-            const float fr   = scratch_r_[f];
-            const float mid  = (fl + fr) * 0.5f;
-            const float side = (fl - fr) * 0.5f * w;
-            band_buffers_[b][f * 2u]      = mid + side;
-            band_buffers_[b][f * 2u + 1u] = mid - side;
+        if (b == 0u) {
+            #pragma clang loop vectorize(enable)
+            for (uint32_t f = 0u; f < size; ++f) {
+                const float mid  = (scratch_l_[f] + scratch_r_[f]) * 0.5f;
+                const float side = (scratch_l_[f] - scratch_r_[f]) * 0.5f * w;
+                L[f] = mid + side;
+                R[f] = mid - side;
+            }
+        } else {
+            #pragma clang loop vectorize(enable)
+            for (uint32_t f = 0u; f < size; ++f) {
+                const float mid  = (scratch_l_[f] + scratch_r_[f]) * 0.5f;
+                const float side = (scratch_l_[f] - scratch_r_[f]) * 0.5f * w;
+                L[f] += mid + side;
+                R[f] += mid - side;
+            }
         }
-    }
-
-    for (uint32_t f = 0u; f < size; ++f) {
-        float sum_l = 0.0f, sum_r = 0.0f;
-        for (uint32_t b = 0u; b < kNumBands; ++b) {
-            sum_l += band_buffers_[b][f * 2u];
-            sum_r += band_buffers_[b][f * 2u + 1u];
-        }
-        L[f] = sum_l;
-        R[f] = sum_r;
     }
 }

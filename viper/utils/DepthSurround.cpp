@@ -29,6 +29,32 @@ void DepthSurround::Process(float* const samples, const uint32_t size) noexcept 
     }
 }
 
+
+void DepthSurround::ProcessPlanar(float* __restrict L, float* __restrict R,
+                                   const size_t frames) noexcept {
+    if (!enable_) return;
+
+    const float gain_r = strength_at_least500_ ? -gain_ : gain_;
+
+    for (size_t i = 0; i < frames; ++i) {
+        const float sample_l = L[i];
+        const float sample_r = R[i];
+
+        prev_[0] = gain_  * time_const_delay_[0].ProcessSample(sample_l + prev_[1]);
+        prev_[1] = gain_r * time_const_delay_[1].ProcessSample(sample_r + prev_[0]);
+
+        const float l       = prev_[0] + sample_l;
+        const float r       = prev_[1] + sample_r;
+        const float diff    = (l - r) * 0.5f;
+        const float avg     = (l + r) * 0.5f;
+        const float avg_out = static_cast<float>(highpass_.ProcessSample(diff));
+
+        L[i] = avg + (diff - avg_out);
+        R[i] = avg - (diff - avg_out);
+    }
+}
+
+
 void DepthSurround::SetStrength(const uint32_t value) noexcept {
     strength_ = value;
     RefreshStrength(value);

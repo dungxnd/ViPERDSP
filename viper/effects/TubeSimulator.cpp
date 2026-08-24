@@ -186,28 +186,28 @@ void TubeSimulator::SetSamplingRate(const uint32_t sampling_rate) noexcept {
     }
 }
 
-void TubeSimulator::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
+void TubeSimulator::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty()) return;
 
-    const double wet_gain = static_cast<double>(mix_amount_);
-    const double dry_gain = 1.0 - wet_gain;
+    // Additive exciter topology: saturated harmonics are injected into the dry signal
+    // rather than crossfaded against an APF-shifted dry path.
+    // Eliminates the ~90° phase notch from blending APF-delayed dry with HP-filtered wet.
+    const double wet = static_cast<double>(mix_amount_);
 
-    for (size_t i = 0u; i < frames; ++i) {
+    for (size_t i = 0u; i < L.size(); ++i) {
         if (!std::isfinite(L[i])) L[i] = 0.0f;
         if (!std::isfinite(R[i])) R[i] = 0.0f;
 
-        const double in_l  = L[i];
-        const double dry_l = dry_apf_lpf_[0].ProcessSample(dry_apf_hpf_[0].ProcessSample(in_l));
-        double harm_l      = high_pass_[0].ProcessSample(in_l);
+        const double in_l = L[i];
+        double harm_l     = high_pass_[0].ProcessSample(in_l);
         harm_l = (tube_mode_ == TubeMode::kStatic) ? tube_[0].Process(harm_l) : tube_wdf_[0].Process(harm_l);
         harm_l = low_pass_[0].ProcessSample(harm_l);
-        L[i] = static_cast<float>(dry_l * dry_gain + harm_l * wet_gain);
+        L[i] = static_cast<float>(in_l + harm_l * wet);
 
-        const double in_r  = R[i];
-        const double dry_r = dry_apf_lpf_[1].ProcessSample(dry_apf_hpf_[1].ProcessSample(in_r));
-        double harm_r      = high_pass_[1].ProcessSample(in_r);
+        const double in_r = R[i];
+        double harm_r     = high_pass_[1].ProcessSample(in_r);
         harm_r = (tube_mode_ == TubeMode::kStatic) ? tube_[1].Process(harm_r) : tube_wdf_[1].Process(harm_r);
         harm_r = low_pass_[1].ProcessSample(harm_r);
-        R[i] = static_cast<float>(dry_r * dry_gain + harm_r * wet_gain);
+        R[i] = static_cast<float>(in_r + harm_r * wet);
     }
 }

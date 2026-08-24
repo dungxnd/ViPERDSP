@@ -18,37 +18,6 @@ MultibandCompressor::MultibandCompressor() {
     ConfigureCrossovers();
 }
 
-void MultibandCompressor::Process(float* const samples, const uint32_t size) noexcept {
-    if (!enable_ || size == 0) return;
-    if (size > kMaxFrames) return;
-
-    for (uint32_t b = 0; b < band_count_; ++b) {
-        // Deinterleave input into planar scratch
-        for (uint32_t f = 0; f < size; ++f) {
-            band_scratch_l_[f] = samples[f * 2u];
-            band_scratch_r_[f] = samples[f * 2u + 1u];
-        }
-        // Block crossover filter for band b
-        crossover_.ProcessBand(b, band_count_, band_scratch_l_.data(), band_scratch_r_.data(), size);
-        // Re-interleave into band_buffers_[b]
-        for (uint32_t f = 0; f < size; ++f) {
-            band_buffers_[b][f * 2u]      = band_scratch_l_[f];
-            band_buffers_[b][f * 2u + 1u] = band_scratch_r_[f];
-        }
-        compressors_[b].Process(band_buffers_[b].data(), size);
-    }
-
-    for (uint32_t i = 0; i < size * 2u; i += 2) {
-        float sum_l = 0.0f, sum_r = 0.0f;
-        for (uint32_t b = 0; b < band_count_; ++b) {
-            sum_l += band_buffers_[b][i];
-            sum_r += band_buffers_[b][i + 1];
-        }
-        samples[i]     = sum_l;
-        samples[i + 1] = sum_r;
-    }
-}
-
 void MultibandCompressor::Reset() noexcept {
     for (auto& comp : compressors_) comp.Reset();
     crossover_.Reset();
@@ -182,19 +151,34 @@ void MultibandCompressor::ConfigureCrossovers() noexcept {
     crossover_.Configure(crossover_freqs_.data(), band_count_ - 1u, sampling_rate_);
 }
 
-void MultibandCompressor::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!IsEnabled() || frames == 0) return;
-    const auto n = static_cast<uint32_t>(frames);
-    // Process() already owns band_buffers_ — reuse band_buffers_[0] as interleave
-    // scratch; it is unconditionally overwritten on entry to Process().
-    float* const sc = band_buffers_[0].data();
-    for (size_t i = 0u; i < frames; ++i) {
-        sc[2u * i]      = L[i];
-        sc[2u * i + 1u] = R[i];
-    }
-    Process(sc, n);
-    for (size_t i = 0u; i < frames; ++i) {
-        L[i] = sc[2u * i];
-        R[i] = sc[2u * i + 1u];
+void MultibandCompressor::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!IsEnabled() || L.empty() || L.size() > kMaxFrames) return;
+    const size_t frames = L.size();
+
+    for (uint32_t b = 0u; b < band_count_; ++b) {
+        // Copy input into planar band scratch
+        std::copy_n(L.data(), frames, band_scratch_l_.data());
+        std::copy_n(R.data(), frames, band_scratch_r_.data());
+
+        // Planar Linkwitz-Riley crossover for band b
+        crossover_.ProcessBand(b, band_count_, band_scratch_l_.data(), band_scratch_r_.data(), static_cast<uint32_t>(frames));
+
+        // Planar FET compression
+        compressors_[b].ProcessPlanar(
+            std::span<float>{band_scratch_l_.data(), frames},
+            std::span<float>{band_scratch_r_.data(), frames}
+        );
+
+        // Accumulate into output
+        if (b == 0u) {
+            std::copy_n(band_scratch_l_.data(), frames, L.data());
+            std::copy_n(band_scratch_r_.data(), frames, R.data());
+        } else {
+#pragma clang loop vectorize(enable)
+            for (size_t f = 0u; f < frames; ++f) {
+                L[f] += band_scratch_l_[f];
+                R[f] += band_scratch_r_[f];
+            }
+        }
     }
 }

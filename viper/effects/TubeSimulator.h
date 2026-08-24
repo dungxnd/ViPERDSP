@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/QuadricTube.h"
 #include "../utils/QuadricTubeWDF.h"
 #include "../utils/MultiBiquad.h"
@@ -28,7 +31,7 @@ public:
 
     TubeSimulator();
 
-    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
     [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }

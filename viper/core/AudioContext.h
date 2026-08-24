@@ -80,12 +80,14 @@ struct alignas(64) AudioProcessContext {
 
 // C++23 concept: constrains the RT-safe planar DSP interface.
 // Effects satisfying this concept can participate in the planar pipeline.
+// All ProcessPlanar implementations receive non-owning std::span<float> views
+// into the pipeline's AudioProcessContext buffers — zero copies, no indirection.
 template <typename T>
-concept PlanarAudioEffect = requires(T effect, float* l, float* r, size_t frames, uint32_t sr) {
-    { effect.ProcessPlanar(l, r, frames) } noexcept -> std::same_as<void>;
-    { effect.Reset()          } noexcept;
+concept PlanarAudioEffect = requires(T effect, std::span<float> l, std::span<float> r, uint32_t sr) {
+    { effect.ProcessPlanar(l, r) } noexcept -> std::same_as<void>;
+    { effect.Reset()             } noexcept;
     { effect.SetSamplingRate(sr) };
-    { effect.IsEnabled()      } noexcept -> std::same_as<bool>;
+    { effect.IsEnabled()         } noexcept -> std::same_as<bool>;
 };
 
 } // namespace viper::core

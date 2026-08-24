@@ -25,15 +25,15 @@ AnalogX::AnalogX() {
 //
 // We process both channels per sample, iterating over the planar arrays
 // directly (stride-1, no interleave copies).
-void AnalogX::ProcessPlanar(float* __restrict L, float* __restrict R, const size_t frames) noexcept {
-    if (!enable_ || frames == 0) return;
+void AnalogX::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
+    if (!enable_ || L.empty()) return;
 
     auto& hp_l = high_pass_[0]; auto& hp_r = high_pass_[1];
     auto& lp_l = low_pass_[0];  auto& lp_r = low_pass_[1];
     auto& pk_l = peak_[0];      auto& pk_r = peak_[1];
     auto& hm_l = harmonic_[0];  auto& hm_r = harmonic_[1];
 
-    for (size_t i = 0; i < frames; ++i) {
+    for (size_t i = 0; i < L.size(); ++i) {
         // Left channel
         const double in_l  = L[i];
         const double hp_l_out = hp_l.ProcessSample(in_l);
@@ -51,12 +51,6 @@ void AnalogX::ProcessPlanar(float* __restrict L, float* __restrict R, const size
         R[i] = static_cast<float>(pk_r_out);
     }
 
-    if (freq_range_ < sampling_rate_ / 4) {
-        const auto mute = std::min(frames, static_cast<size_t>(sampling_rate_ / 4 - freq_range_));
-        std::fill_n(L, mute, 0.0f);
-        std::fill_n(R, mute, 0.0f);
-        freq_range_ += static_cast<uint32_t>(mute);
-    }
 }
 
 void AnalogX::Reset() {
@@ -87,8 +81,6 @@ void AnalogX::Reset() {
     for (auto& f : low_pass_) {
         f.RefreshFilter(FT::LowPass, {.frequency = static_cast<double>(m.cutoff), .sample_rate = sampling_rate_, .q_factor = 0.717});
     }
-
-    freq_range_ = 0;
 }
 
 void AnalogX::SetEnable(const bool enable) {

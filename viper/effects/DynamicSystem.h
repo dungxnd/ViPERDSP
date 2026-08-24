@@ -1,5 +1,8 @@
 #pragma once
 
+#include <span>
+
+
 #include "../utils/DynamicBass.h"
 #include <array>
 #include <cstdint>
@@ -8,7 +11,7 @@ class DynamicSystem {
 public:
     DynamicSystem();
 
-    void ProcessPlanar(float* __restrict L, float* __restrict R, size_t frames) noexcept;
+    void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
     [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
