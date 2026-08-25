@@ -59,6 +59,9 @@ private:
     // Must be a power-of-two >= Polyphase::kLatency (31) — 64 satisfies this.
     static constexpr size_t kDelayCapacity = 64u;
     static constexpr size_t kDelayMask     = kDelayCapacity - 1u;
+    // Largest frame block the interleaved Process() path accepts; matches the
+    // planar pipeline's AudioProcessContext<4096> block size.
+    static constexpr size_t kMaxFrames = 4096u;
 
     std::array<std::array<float, kDelayCapacity>, 2> bass_delay_{};
     size_t delay_write_idx_{0u};
@@ -66,6 +69,13 @@ private:
     // Pre-allocated scratch buffer for ProcessSubwoofer anti-pop blend and
     // ProcessPureBassPlus mid/high FIR pass.  Sized in ctor / SetSamplingRate().
     std::vector<float> scratch_buffer_;
+
+    // Dedicated staging for the interleaved Process() path (NaturalBass /
+    // PureBassPlus deinterleave staging + Subwoofer planar bounce).  Separate
+    // from scratch_buffer_ so the planar region [0..4*frames) is never
+    // aliased by the interleaved staging at [4*frames..6*frames) — the ctor
+    // only sized 4*frames and SetSamplingRate() is not called at 44.1 kHz.
+    std::array<float, kMaxFrames * 2u> staging_buffer_{};
 
     void ShapeMix(float& left, float& right, float bass_l, float bass_r) noexcept;
     void ApplyAntiPop(float& bass_l, float& bass_r) noexcept;

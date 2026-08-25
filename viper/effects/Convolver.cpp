@@ -265,6 +265,11 @@ void Convolver::SetCrossChannel(float value) {
 
 void Convolver::SetSamplingRate(const uint32_t sampling_rate) {
     sampling_rate_ = sampling_rate;
+    // A sample-rate change invalidates the loaded filter stages (they were
+    // designed for the old rate).  Reset the CRC guard so the next commit of
+    // the same IR bytes is NOT skipped as a duplicate — it must rebuild the
+    // stages at the new rate.
+    current_kernel_buffer_crc_ = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,8 +317,17 @@ void Convolver::CommitKernelBuffer(
 
     const auto* const raw = reinterpret_cast<const std::byte*>(kernel_buffer_.data());
     const uint32_t calculated_crc = Crc32(reinterpret_cast<const uint8_t*>(raw), current_size_ * 4);
-    if (channel_count_ - 1 > 1 || calculated_crc != expected_crc
-        || calculated_crc == current_kernel_buffer_crc_) {
+    if (channel_count_ - 1 > 1 || calculated_crc != expected_crc) {
+        ClearKernelBuffer();
+        return;
+    }
+
+    // Same CRC as the currently-loaded kernel: the caller is re-committing the
+    // same IR (e.g. after a sample-rate reset or preset re-apply).  The current
+    // kernel is already staged and valid — keep it, but still adopt the new
+    // kernel_id so LoadConvolverKernel()'s GetKernelID() check succeeds.
+    if (calculated_crc == current_kernel_buffer_crc_) {
+        kernel_id_ = kernel_id;
         ClearKernelBuffer();
         return;
     }

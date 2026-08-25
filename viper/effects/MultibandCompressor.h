@@ -52,9 +52,17 @@ private:
 
     std::array<FETCompressor, kMaxBands>          compressors_;
     static constexpr uint32_t kMaxFrames = 4096u;
-    // Planar per-band scratch — used by ProcessPlanar(); no interleaved band_buffers_ needed.
+    // Per-band scratch + band-sum accumulator for ProcessPlanar().
+    // Each band copies the ORIGINAL input from L/R into its scratch, filters,
+    // compresses, and accumulates into accum_l_/accum_r_ (zero-filled each
+    // call), which is finally copied to L/R — output is exactly Σbands.  The
+    // accumulator must not be seeded with the input (that would double the
+    // signal) nor used as the band-input source (band 0's output would corrupt
+    // bands 1..N).
     alignas(64) std::array<float, kMaxFrames> band_scratch_l_{};
     alignas(64) std::array<float, kMaxFrames> band_scratch_r_{};
+    alignas(64) std::array<float, kMaxFrames> accum_l_{};
+    alignas(64) std::array<float, kMaxFrames> accum_r_{};
 
     void ConfigureCrossovers() noexcept;
 };

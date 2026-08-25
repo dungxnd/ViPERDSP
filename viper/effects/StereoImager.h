@@ -39,10 +39,18 @@ private:
 
     // Pre-allocated: eliminates RT-unsafe resize() in Process().
     static constexpr uint32_t kMaxFrames = 4096u;
-    // scratch_l_/scratch_r_ hold the per-band copy fed to ProcessBand().
-    // band_buffers_ is eliminated — band outputs accumulate directly into L/R.
+    // scratch_l_/scratch_r_ hold the per-band copy fed to ProcessBand() (copied
+    // from the ORIGINAL L/R input each band).  accum_l_/accum_r_ are the
+    // zero-filled band-sum accumulator: each band's output accumulates here and
+    // the result is copied to L/R — so the final output is exactly Σbands and
+    // band 0's output never corrupts the input that bands 1..N read.
     alignas(64) std::array<float, kMaxFrames> scratch_l_{};
     alignas(64) std::array<float, kMaxFrames> scratch_r_{};
+    alignas(64) std::array<float, kMaxFrames> accum_l_{};
+    alignas(64) std::array<float, kMaxFrames> accum_r_{};
 
     void ConfigureCrossovers() noexcept;
+    // Clamp a crossover frequency into [20 Hz, 0.45·fs]; values ≤ 0 fall back
+    // to the neutral 200 Hz default instead of destabilising the filter bank.
+    [[nodiscard]] static float ClampCrossover(float value) noexcept;
 };

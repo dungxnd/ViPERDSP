@@ -55,8 +55,49 @@ void SoftwareLimiter::ProcessBlock(float* __restrict x, const size_t frames) noe
     }
 }
 
+void SoftwareLimiter::ProcessBlockStereoLinked(float* __restrict L, float* __restrict R,
+                                               const size_t frames) noexcept {
+    for (size_t i = 0; i < frames; ++i) {
+        const float l = std::isfinite(L[i]) ? L[i] : 0.0f;
+        const float r = std::isfinite(R[i]) ? R[i] : 0.0f;
+
+        const uint32_t wi = write_index_;
+
+        // 1. Insert max(|L|,|R|) into the segment tree — shared peak detector.
+        uint32_t node = kLookahead + wi;
+        arr512_[node] = std::max(std::fabs(l), std::fabs(r));
+        while (node > 1) {
+            const uint32_t parent  = node >> 1;
+            const uint32_t sibling = node ^ 1;
+            arr512_[parent] = std::max(arr512_[node], arr512_[sibling]);
+            node = parent;
+        }
+
+        // 2. One gain envelope for BOTH channels.
+        const float window_peak = arr512_[1];
+        const float target_gain = (window_peak > gate_) ? (gate_ / window_peak) : 1.0f;
+        if (target_gain < gain_envelope_) {
+            gain_envelope_ = target_gain;
+        } else {
+            gain_envelope_ += release_coeff_ * (target_gain - gain_envelope_) + kDenormFix;
+        }
+        if (gain_envelope_ > 1.0f) gain_envelope_ = 1.0f;
+
+        // 3. Read the delayed samples and advance (separate delay lines).
+        const float delayed_l = arr256_[wi];
+        const float delayed_r = arr256_r_[wi];
+        arr256_[wi]   = l;
+        arr256_r_[wi] = r;
+        write_index_ = (wi + 1) & (kLookahead - 1);
+
+        L[i] = delayed_l * gain_envelope_;
+        R[i] = delayed_r * gain_envelope_;
+    }
+}
+
 void SoftwareLimiter::Reset() noexcept {
     arr256_.fill(0.0f);
+    arr256_r_.fill(0.0f);
     arr512_.fill(0.0f);
     ready_         = false;
     write_index_   = 0;

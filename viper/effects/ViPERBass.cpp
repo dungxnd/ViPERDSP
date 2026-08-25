@@ -168,12 +168,13 @@ void ViPERBass::Process(std::span<float> samples) noexcept {
     [[assume(size % 2 == 0)]];
 
     const size_t frames = size / 2u;
+    if (frames > kMaxFrames) return; // staging_buffer_ is sized for kMaxFrames
     StereoView audio(samples.data(), frames, 2u);
 
     // Deinterleave once for the Natural/PureBassPlus planar paths.
-    // scratch_buffer_ is 4096*4 floats; use the back half ([4f..6f-1]) for staging
-    // so ProcessPureBassPlus can still use [0..4f-1] for its fir/dry scratch.
-    float* const pl = scratch_buffer_.data() + frames * 4u;
+    // Dedicated staging buffer — never aliases scratch_buffer_ (which stays
+    // wholly available for ProcessPureBassPlus's [0..4*frames) FIR/dry region).
+    float* const pl = staging_buffer_.data();
     float* const pr = pl + frames;
 
     using enum ProcessMode;

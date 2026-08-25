@@ -9,6 +9,10 @@ public:
 
     [[nodiscard]] float Process(float sample) noexcept;
     void ProcessBlock(float* __restrict x, size_t frames) noexcept;
+    // Stereo-linked block processing: both channels share one peak detector and
+    // one gain envelope, so a transient on one channel attenuates both equally
+    // (no stereo image shift).  L and R must not overlap.
+    void ProcessBlockStereoLinked(float* __restrict L, float* __restrict R, size_t frames) noexcept;
     void Reset() noexcept;
 
     void SetGate(float gate) noexcept;
@@ -33,5 +37,9 @@ private:
     // Initialised for 48 kHz; recomputed by SetSamplingRate().
     float release_coeff_{0.0f};
     std::array<float, 256> arr256_{};
+    // Second lookahead delay line for the right channel — used only by
+    // ProcessBlockStereoLinked() so L and R share the peak detector but each
+    // keeps its own delay buffer.
+    std::array<float, 256> arr256_r_{};
     std::array<float, 512> arr512_{};
 };

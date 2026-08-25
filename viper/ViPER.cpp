@@ -63,6 +63,7 @@ ViPER::ViPER() :
     stereo_imager_.Reset();
 
     reverberation_.SetEnable(false);
+    reverberation_.SetSamplingRate(sampling_rate_);
     reverberation_.Reset();
 
     playback_gain_.SetEnable(false);
@@ -166,7 +167,10 @@ void ViPER::RebuildActivePipelineTopology() noexcept {
 }
 
 void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
-    if (size == 0 || buffer.size() < size * 2u) return;
+    // planar_context_ is AudioProcessContext<4096>: a host block > 4096 frames
+    // would overflow the planar left/right arrays.  Guard against both an
+    // undersized buffer and an oversized block.
+    if (size == 0 || size > 4096u || buffer.size() < size * 2u) return;
 
     // ── 1. Pending resets (atomic, RT-safe) ────────────────────────────────
     if (pending_effects_reset_.exchange(false, std::memory_order_acquire)) {
@@ -206,8 +210,9 @@ void ViPER::Process(std::vector<float> &buffer, const uint32_t size) {
     }
 
     // ── 6. True-peak limiter (planar domain: stride-1, 100% cache-local) ──
-    software_limiters_[0].ProcessBlock(L, size);
-    software_limiters_[1].ProcessBlock(R, size);
+    // Stereo-linked: both channels share one peak detector + gain envelope so
+    // a transient on one channel never shifts the stereo image.
+    software_limiters_[0].ProcessBlockStereoLinked(L, R, size);
 
     // ── 7. Egress: single SIMD interleave back to caller's buffer ─────────
     planar_context_.Interleave(raw_io);
@@ -1389,8 +1394,13 @@ void ViPER::ApplySpeakerCorrection(const viper::SpeakerCorrectionParams &p) {
 void ViPER::ApplyMultibandCompressor(const viper::MultibandCompressorParams &p) {
     multiband_compressor_.SetEnable(p.enable);
     multiband_compressor_.SetBandCount(p.band_count);
-    for (uint32_t i = 0; i < (p.band_count - 1u) && i < p.crossover_frequencies.size(); ++i) {
-        multiband_compressor_.SetCrossoverFrequency(i, p.crossover_frequencies[i]);
+    // p.band_count is uint32_t: `band_count - 1u` underflows to UINT32_MAX when
+    // band_count == 0 (default-initialized params), corrupting every crossover
+    // frequency to 0 Hz.  Require at least 2 bands before touching crossovers.
+    if (p.band_count > 1u) {
+        for (uint32_t i = 0; i < (p.band_count - 1u) && i < p.crossover_frequencies.size(); ++i) {
+            multiband_compressor_.SetCrossoverFrequency(i, p.crossover_frequencies[i]);
+        }
     }
     for (uint32_t i = 0; i < p.band_count && i < p.bands.size(); i++) {
         const auto &b = p.bands[i];

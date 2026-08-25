@@ -57,12 +57,18 @@ void LUFSTargeting::UpdateWindow() noexcept {
 
     const float mean_square = window_accumulator_ / static_cast<float>(window_sample_count_);
     // Per ITU-R BS.1770-4: always advance the ring so silent blocks evict old power.
-    // Sub-threshold slots store 0 rather than skipping the write entirely.
-    const float stored_power = (mean_square > kGateThreshold) ? mean_square : 0.0f;
+    // Sub-threshold (gated) blocks are EXCLUDED from the gated average: they are
+    // stored as 0 power but do NOT increment active_window_count_, so silence
+    // never dilutes the mean toward -inf LUFS (which would over-boost the AGC
+    // and cause a volume blast when audio resumes).
+    const bool  gated        = mean_square <= kGateThreshold;
+    const float stored_power = gated ? 0.0f : mean_square;
     // O(1) running sum: remove the value about to be overwritten, add new
     running_power_sum_ -= window_power_[window_write_idx_];
+    if (window_power_[window_write_idx_] > 0.0f) --active_window_count_;
     window_power_[window_write_idx_] = stored_power;
     running_power_sum_ += stored_power;
+    if (!gated) ++active_window_count_;
     window_write_idx_ = (window_write_idx_ + 1u) % kMaxWindows;
     if (window_count_ < kMaxWindows) ++window_count_;
 
@@ -75,8 +81,8 @@ void LUFSTargeting::UpdateWindow() noexcept {
 
 // O(1): no loop, one division, one FastLog2 (3 clock cycles)
 float LUFSTargeting::MeasureLUFS() const noexcept {
-    if (window_count_ == 0u) return -70.0f;
-    const float gated_mean = running_power_sum_ / static_cast<float>(window_count_);
+    if (active_window_count_ == 0u) return -70.0f;
+    const float gated_mean = running_power_sum_ / static_cast<float>(active_window_count_);
     return (gated_mean > 1e-12f)
                ? -0.691f + viper::dsp::FastPowerToDb(gated_mean)
                : -70.0f;
@@ -114,8 +120,14 @@ void LUFSTargeting::Process(std::span<float> samples) noexcept {
     //    Time constant scaled to block duration dt = frame_count/sr so
     //    alpha_block = 1 - exp(-dt/tau) — exact regardless of block size.
     // ----------------------------------------------------------------
+    // With no non-gated windows (pure silence), cached_lufs_ is the -70 LUFS
+    // sentinel — using it would compute target - (-70) = +max_gain and ramp the
+    // AGC to maximum during a pause, blasting when audio resumes.  Hold the
+    // current gain instead: measure as target_lufs_ → 0 dB desired delta.
+    const float measured_lufs =
+        (active_window_count_ == 0u) ? target_lufs_ : cached_lufs_;
     const float desired_gain_db = std::clamp(
-        target_lufs_ - cached_lufs_,
+        target_lufs_ - measured_lufs,
         -max_gain_db_,
         max_gain_db_
     );
@@ -157,6 +169,7 @@ void LUFSTargeting::Reset() noexcept {
     window_sample_count_ = 0u;
     window_write_idx_    = 0u;
     window_count_        = 0u;
+    active_window_count_ = 0u;
     running_power_sum_   = 0.0f;
     cached_lufs_         = -70.0f;
     window_power_.fill(0.0f);
@@ -216,8 +229,11 @@ void LUFSTargeting::ProcessPlanar(std::span<float> L, std::span<float> R) noexce
         }
     }
 
+    // Gain hold during silence — see the interleaved Process() path.
+    const float measured_lufs =
+        (active_window_count_ == 0u) ? target_lufs_ : cached_lufs_;
     const float desired_gain_db = std::clamp(
-        target_lufs_ - cached_lufs_,
+        target_lufs_ - measured_lufs,
         -max_gain_db_,
         max_gain_db_
     );

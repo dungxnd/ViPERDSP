@@ -1,4 +1,5 @@
 #include "PassFilter.h"
+#include <algorithm>
 
 PassFilter::PassFilter() {
     Reset();
@@ -29,9 +30,11 @@ void PassFilter::ProcessPlanar(float* __restrict L, float* __restrict R, const s
 }
 
 void PassFilter::Reset() noexcept {
-    const float cutoff = (sampling_rate_ < 44100)
-        ? static_cast<float>(sampling_rate_) - 100.0f
-        : 18000.0f;
+    // Clamp the low-pass cutoff to a safe fraction of Nyquist.  The previous
+    // `fs - 100` fallback exceeded Nyquist at every rate below 44.1 kHz, which
+    // made tan(pi*f/fs) negative and pushed the IIR pole outside the unit
+    // circle (|a1| > 1) — instant ±inf/NaN divergence.
+    const float cutoff = std::min(18000.0f, static_cast<float>(sampling_rate_) * 0.45f);
 
     filters_[0].SetLPF(cutoff, sampling_rate_);
     filters_[1].SetLPF(cutoff, sampling_rate_);

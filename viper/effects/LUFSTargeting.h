@@ -67,6 +67,9 @@ private:
     uint32_t window_sample_count_{0u};
     uint32_t window_write_idx_{0u};
     uint32_t window_count_{0u};
+    // Number of ring slots currently holding non-gated (above-threshold)
+    // power.  Gated slots store 0 but must not dilute the LUFS mean.
+    uint32_t active_window_count_{0u};
 
     float target_lufs_{-14.0f};
     float max_gain_db_{6.0f};

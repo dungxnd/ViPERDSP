@@ -13,7 +13,8 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
-    float  frequency_ = 0.0f;
+    float  frequency_     = 0.0f;
+    double sampling_rate_ = 44100.0;
 
     double gain_ = 0.0;
     double x1_   = 0.0;
@@ -26,4 +27,9 @@ private:
     double a0_   = 0.0;
     double a1_   = 0.0;
     double a2_   = 0.0;
+
+    // Recompute filter coefficients from the current frequency_/gain_/
+    // sampling_rate_.  Does NOT clear delay state, so gain/frequency changes
+    // during playback don't click.
+    void UpdateCoefficients() noexcept;
 };

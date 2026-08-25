@@ -713,6 +713,19 @@ void PConvNUPC::ZconvolveAccumulateFP16(const float* __restrict__ fdl,
     const __fp16*      vb  = filter_fp16;
     float32x4_t*       vab = reinterpret_cast<float32x4_t*>(accum);
 
+    // The PFFFT real-transform layout stores DC and Nyquist as REAL SCALARS at
+    // fdl[0] and fdl[4] (lane 0 of the first two v4sf).  The SIMD loop below
+    // treats every v4sf pair as a complex bin, which cross-contaminates those
+    // scalar slots (their remaining lanes hold real bins 1..7).  Mirror
+    // pffft_zconvolve_accumulate exactly: save the PRE-LOOP accumulator values,
+    // run the full complex loop, then OVERWRITE the two scalar slots with
+    // prev + correct_product (a += after the loop would add to the corrupted
+    // complex cross-product residue).
+    const float prev_dc = accum[0];
+    const float prev_ny = accum[4];
+    const float dc_prod = fdl[0] * static_cast<float>(filter_fp16[0]);
+    const float ny_prod = fdl[4] * static_cast<float>(filter_fp16[4]);
+
     for (int i = 0; i < ncvec; i += 2) {
         // Load 8 FP16 values as two float16x4_t (4 FP16 each), widen to float32x4_t.
         float32x4_t br0 = vcvt_f32_f16(vld1_f16(vb + 4 * (2*i+0)));
@@ -742,5 +755,9 @@ void PConvNUPC::ZconvolveAccumulateFP16(const float* __restrict__ fdl,
         vab[2*i+2] = vaddq_f32(vab[2*i+2], wr1);
         vab[2*i+3] = vaddq_f32(vab[2*i+3], wi1);
     }
+
+    // Overwrite the corrupted SIMD scalar slots with the exact products.
+    accum[0] = prev_dc + dc_prod;
+    accum[4] = prev_ny + ny_prod;
 }
 #endif

@@ -49,7 +49,7 @@ void HiFi::Reset() {
         fs.lowpass->Mute();
         fs.highpass->SetHPF(1200.0f, sampling_rate_);
         fs.highpass->Mute();
-        fs.bandpass->SetBPF(120.0f, 1200.0f, sampling_rate_);
+        fs.bandpass->SetBPF(1200.0f, 120.0f, sampling_rate_);
         fs.bandpass->Mute();
     }
     buffers_[0]->Reset();

@@ -154,8 +154,9 @@ void ViPERBassMono::Process(std::span<float> samples) noexcept {
     // Subwoofer requires interleaved layout — bounce through scratch.
     // NaturalBass and PureBassPlus are planar-native; deinterleave temporarily.
     const size_t frames = size / 2u;
-    float* const sc_l = scratch_buffer_.data() + frames * 4u; // end of planar region
-    float* const sc_r = scratch_buffer_.data() + frames * 5u;
+    if (frames > kMaxFrames) return; // staging_buffer_ is sized for kMaxFrames
+    float* const sc_l = staging_buffer_.data();
+    float* const sc_r = staging_buffer_.data() + frames;
 
     using enum ProcessMode;
     switch (process_mode_) {

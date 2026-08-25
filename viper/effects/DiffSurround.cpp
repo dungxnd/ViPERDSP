@@ -95,6 +95,9 @@ void DiffSurround::ProcessPlanar(std::span<float> L, std::span<float> R) noexcep
         }
 
         ch[direct_ch][i]  = direct_out;
-        ch[delayed_ch][i] = dry * direct_out + wet * delayed_out;
+        // Dry term = the delayed channel's OWN undelayed input.  The previous
+        // `dry * direct_out` cross-fed the direct channel into the delayed
+        // channel, collapsing stereo to mono at wet_dry_mix_ = 0 (100% dry).
+        ch[delayed_ch][i] = dry * delayed_in + wet * delayed_out;
     }
 }

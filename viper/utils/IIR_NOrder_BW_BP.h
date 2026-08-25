@@ -9,7 +9,12 @@ public:
     explicit IIR_NOrder_BW_BP(uint32_t order);
 
     void Mute() noexcept;
-    void SetBPF(float high_cut, float low_cut, uint32_t sampling_rate) noexcept;
+    // Band-pass as LP(low_edge) · HP(high_edge): the low-pass keeps everything
+    // below the UPPER edge and the high-pass keeps everything above the LOWER
+    // edge, passing [high_edge, low_edge].  The parameter names are the band
+    // edges, NOT the filter they feed — `low_edge` goes to the low-pass and
+    // `high_edge` to the high-pass.
+    void SetBPF(float low_edge, float high_edge, uint32_t sampling_rate) noexcept;
 
     uint32_t order_;
 

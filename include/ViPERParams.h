@@ -367,12 +367,15 @@ struct DiffSurroundParams {
 
 struct StereoImagerParams {
     bool enable = false;
-    float low_width = 0.0f;      // percent: 0..200
-    float mid_width = 0.0f;      // percent: 0..200
-    float high_width = 0.0f;     // percent: 0..200
-    float low_crossover = 0.0f;  // Hz
-    float high_crossover = 0.0f; // Hz
+    float low_width = 100.0f;      // percent: 0..200 (100% = neutral stereo)
+    float mid_width = 100.0f;      // percent: 0..200
+    float high_width = 100.0f;     // percent: 0..200
+    float low_crossover = 200.0f;  // Hz
+    float high_crossover = 4000.0f; // Hz
 
+    // When both are disabled the rest of the fields are irrelevant — treat
+    // two disabled param sets as equal so ApplyParamsToEffects skips the
+    // no-op re-apply (and never feeds stale 0 Hz defaults to the filters).
     bool operator==(const StereoImagerParams &other) const {
         if (!enable && !other.enable) return true;
         return enable == other.enable && low_width == other.low_width

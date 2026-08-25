@@ -50,8 +50,16 @@ void MultibandCompressor::SetCrossoverFrequency(
     const uint32_t index, const float frequency
 ) noexcept {
     if (index >= band_count_ - 1) return;
-    if (crossover_freqs_[index] == frequency) return;
-    crossover_freqs_[index] = frequency;
+    // A 0 Hz crossover puts a pole exactly on the unit circle (y[n] =
+    // 2·y[n-1] - y[n-2]) and explodes on any non-zero signal; anything at or
+    // above Nyquist degenerates into a useless/unstable filter.  Same clamp as
+    // StereoImager::ClampCrossover: fall back to the neutral default, then
+    // clamp into [20 Hz, 0.45·fs].
+    const float max_freq = static_cast<float>(sampling_rate_) * 0.45f;
+    const float clamped  = std::clamp(
+        frequency > 0.0f ? frequency : 200.0f, 20.0f, max_freq);
+    if (crossover_freqs_[index] == clamped) return;
+    crossover_freqs_[index] = clamped;
     ConfigureCrossovers();
 }
 
@@ -155,8 +163,16 @@ void MultibandCompressor::ProcessPlanar(std::span<float> L, std::span<float> R) 
     if (!IsEnabled() || L.empty() || L.size() > kMaxFrames) return;
     const size_t frames = L.size();
 
+    // Band-sum accumulator — zero-filled.  Each band copies the ORIGINAL input
+    // from L/R (untouched until the final copy-out) into its scratch, filters,
+    // compresses, and accumulates.  The input must NOT seed the accumulator:
+    // that would double the signal (Input + Σbands = 2·Input) and corrupt
+    // band 1..N with band 0's output.
+    std::fill_n(accum_l_.data(), frames, 0.0f);
+    std::fill_n(accum_r_.data(), frames, 0.0f);
+
     for (uint32_t b = 0u; b < band_count_; ++b) {
-        // Copy input into planar band scratch
+        // Copy the ORIGINAL input into band scratch.
         std::copy_n(L.data(), frames, band_scratch_l_.data());
         std::copy_n(R.data(), frames, band_scratch_r_.data());
 
@@ -169,16 +185,15 @@ void MultibandCompressor::ProcessPlanar(std::span<float> L, std::span<float> R) 
             std::span<float>{band_scratch_r_.data(), frames}
         );
 
-        // Accumulate into output
-        if (b == 0u) {
-            std::copy_n(band_scratch_l_.data(), frames, L.data());
-            std::copy_n(band_scratch_r_.data(), frames, R.data());
-        } else {
+        // Accumulate band output into the band-sum accumulator.
 #pragma clang loop vectorize(enable)
-            for (size_t f = 0u; f < frames; ++f) {
-                L[f] += band_scratch_l_[f];
-                R[f] += band_scratch_r_[f];
-            }
+        for (size_t f = 0u; f < frames; ++f) {
+            accum_l_[f] += band_scratch_l_[f];
+            accum_r_[f] += band_scratch_r_[f];
         }
     }
+
+    // Copy the band-summed result to the output.
+    std::copy_n(accum_l_.data(), frames, L.data());
+    std::copy_n(accum_r_.data(), frames, R.data());
 }

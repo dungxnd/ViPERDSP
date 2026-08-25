@@ -65,38 +65,22 @@ TubeSimulator::TubeSimulator() {
 }
 
 void TubeSimulator::Process(float *buffer, const uint32_t size) noexcept {
-    if (!enable_) return;
+    if (!enable_ || size == 0 || size > kMaxInterleaveFrames) return;
 
-    // Hoist mix coefficients once per block — avoids repeated float→double widening
-    // and float subtraction inside the hot loop.
-    const double wet_gain = static_cast<double>(mix_amount_);
-    const double dry_gain = 1.0 - wet_gain;
-
-    for (uint32_t i = 0; i < size; i++) {
-        // Sanitize: Inf/NaN on input would corrupt IIR state permanently.
-        if (!std::isfinite(buffer[i * 2]))     buffer[i * 2]     = 0.0f;
-        if (!std::isfinite(buffer[i * 2 + 1])) buffer[i * 2 + 1] = 0.0f;
-
-        const double in_l = buffer[i * 2];
-        // Phase-matched dry path: same APF poles as HPF + LPF on the wet chain
-        const double dry_l = dry_apf_lpf_[0].ProcessSample(
-                                 dry_apf_hpf_[0].ProcessSample(in_l));
-        double harm_l = high_pass_[0].ProcessSample(in_l);
-        harm_l = (tube_mode_ == TubeMode::kStatic)
-            ? tube_[0].Process(harm_l)
-            : tube_wdf_[0].Process(harm_l);
-        harm_l = low_pass_[0].ProcessSample(harm_l);
-        buffer[i * 2] = static_cast<float>(dry_l * dry_gain + harm_l * wet_gain);
-
-        const double in_r = buffer[i * 2 + 1];
-        const double dry_r = dry_apf_lpf_[1].ProcessSample(
-                                 dry_apf_hpf_[1].ProcessSample(in_r));
-        double harm_r = high_pass_[1].ProcessSample(in_r);
-        harm_r = (tube_mode_ == TubeMode::kStatic)
-            ? tube_[1].Process(harm_r)
-            : tube_wdf_[1].Process(harm_r);
-        harm_r = low_pass_[1].ProcessSample(harm_r);
-        buffer[i * 2 + 1] = static_cast<float>(dry_r * dry_gain + harm_r * wet_gain);
+    // Interleaved convenience path — delegates to the canonical additive
+    // exciter topology (see ProcessPlanar).  Previously this duplicated a
+    // DIFFERENT allpass-crossfade signal graph, giving two code paths with
+    // divergent frequency response, headroom, and phase behaviour.
+    for (uint32_t i = 0; i < size; ++i) {
+        planar_l_[i] = buffer[i * 2u];
+        planar_r_[i] = buffer[i * 2u + 1u];
+    }
+    std::span<float> L(planar_l_.data(), size);
+    std::span<float> R(planar_r_.data(), size);
+    ProcessPlanar(L, R);
+    for (uint32_t i = 0; i < size; ++i) {
+        buffer[i * 2u]      = planar_l_[i];
+        buffer[i * 2u + 1u] = planar_r_[i];
     }
 }
 
@@ -113,14 +97,6 @@ void TubeSimulator::Reset() noexcept {
             0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
         low_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::LowPass,
-            0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
-
-        // Matched allpass on dry path: same poles as HPF/LPF → cancels phase mismatch
-        dry_apf_hpf_[ch].RefreshFilter(
-            MultiBiquad::FilterType::AllPass,
-            0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
-        dry_apf_lpf_[ch].RefreshFilter(
-            MultiBiquad::FilterType::AllPass,
             0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
 
         tube_[ch].SetTubeModel(cfg.model, cfg.vdd, cfg.rp, cfg.bias, cfg.output_gain);
@@ -168,13 +144,10 @@ void TubeSimulator::SetTubeHpfCutoff(const float cutoff_hz) noexcept {
     const float clamped = std::clamp(cutoff_hz, 20.0f, 250.0f);
     if (hpf_cutoff_hz_ == clamped) return;
     hpf_cutoff_hz_ = clamped;
-    // Update wet HPF and dry APF synchronously — tube DC-blocker state is untouched.
+    // Update the wet HPF — tube DC-blocker state is untouched.
     for (std::size_t ch = 0; ch < 2; ch++) {
         high_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::HighPass,
-            0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
-        dry_apf_hpf_[ch].RefreshFilter(
-            MultiBiquad::FilterType::AllPass,
             0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
     }
 }

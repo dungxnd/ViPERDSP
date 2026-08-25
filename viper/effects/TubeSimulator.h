@@ -58,8 +58,8 @@ private:
     std::array<QuadricTubeWDF, 2> tube_wdf_{};
     std::array<MultiBiquad, 2>    low_pass_{};
 
-    // Matched allpass filters for the dry path — same poles as HPF/LPF above,
-    // so dry and wet signal accumulate identical phase rotation before blending.
-    std::array<MultiBiquad, 2> dry_apf_hpf_{};
-    std::array<MultiBiquad, 2> dry_apf_lpf_{};
+    // Scratch for the interleaved Process() wrapper (deinterleave → ProcessPlanar).
+    static constexpr uint32_t kMaxInterleaveFrames = 4096u;
+    alignas(64) std::array<float, kMaxInterleaveFrames> planar_l_{};
+    alignas(64) std::array<float, kMaxInterleaveFrames> planar_r_{};
 };

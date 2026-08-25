@@ -12,8 +12,8 @@ void IIR_NOrder_BW_BP::Mute() noexcept {
 }
 
 void IIR_NOrder_BW_BP::SetBPF(
-    const float high_cut, const float low_cut, const uint32_t sampling_rate
+    const float low_edge, const float high_edge, const uint32_t sampling_rate
 ) noexcept {
-    for (auto& f : lowpass_)  { f.SetLowPassFilterBW(low_cut,   sampling_rate); }
-    for (auto& f : highpass_) { f.SetHighPassFilterBW(high_cut, sampling_rate); }
+    for (auto& f : lowpass_)  { f.SetLowPassFilterBW(low_edge,   sampling_rate); }
+    for (auto& f : highpass_) { f.SetHighPassFilterBW(high_edge, sampling_rate); }
 }

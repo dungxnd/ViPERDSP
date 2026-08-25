@@ -72,14 +72,19 @@ struct WavData {
 
 // Scan past non-data chunks and return the size of the "data" chunk (0 = not found).
 [[nodiscard]] inline uint32_t FindDataChunk(std::FILE* const fp, const uint32_t fmt_size) {
-    std::fseek(fp, 12 + 8 + static_cast<int32_t>(fmt_size), SEEK_SET);
+    // RIFF chunks are word-aligned: every chunk (including "fmt ") is padded
+    // to an even byte boundary, so an odd-sized chunk consumes size+1 bytes.
+    const uint32_t fmt_padded = fmt_size + (fmt_size & 1u);
+    std::fseek(fp, 12 + 8 + static_cast<int32_t>(fmt_padded), SEEK_SET);
 
     std::array<uint8_t, 8> chunk_header{};
     uint32_t data_size = 0;
     while (std::fread(chunk_header.data(), 1, 8, fp) == 8) {
         std::memcpy(&data_size, chunk_header.data() + 4, 4);
         if (std::memcmp(chunk_header.data(), "data", 4) == 0) break;
-        std::fseek(fp, data_size, SEEK_CUR);
+        // Skip the chunk payload, padded to the next even boundary.
+        const uint32_t seek_size = data_size + (data_size & 1u);
+        std::fseek(fp, static_cast<long>(seek_size), SEEK_CUR);
         data_size = 0;
     }
     return data_size;
