@@ -94,7 +94,7 @@ void StereoImager::ConfigureCrossovers() noexcept {
     crossover_.Configure(crossover_freqs_.data(), kNumCrossovers, sampling_rate_);
 }
 
-float StereoImager::ClampCrossover(const float value) noexcept {
+float StereoImager::ClampCrossover(const float value) const noexcept {
     // A 0 Hz crossover would put a pole exactly on the unit circle (y[n] =
     // 2·y[n-1] - y[n-2]) and explode on any non-zero signal; anything at or
     // above Nyquist degenerates into a divide-by-zero / useless filter.

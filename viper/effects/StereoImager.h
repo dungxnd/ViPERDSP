@@ -52,5 +52,5 @@ private:
     void ConfigureCrossovers() noexcept;
     // Clamp a crossover frequency into [20 Hz, 0.45·fs]; values ≤ 0 fall back
     // to the neutral 200 Hz default instead of destabilising the filter bank.
-    [[nodiscard]] static float ClampCrossover(float value) noexcept;
+    [[nodiscard]] float ClampCrossover(float value) const noexcept;
 };
