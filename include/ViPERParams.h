@@ -307,7 +307,7 @@ struct SpectrumExtensionParams {
 
 struct EqualizerParams {
     bool enable = false;
-    uint32_t band_count = 0;
+    uint32_t band_count = 10; // Default to 10-band; avoids 0-iteration in ApplyEqualizer
     std::array<float, 31> band_levels{};
 
     bool operator==(const EqualizerParams &other) const {

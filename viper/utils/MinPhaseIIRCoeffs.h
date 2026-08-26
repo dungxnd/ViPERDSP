@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <vector>
 
@@ -45,6 +44,5 @@ private:
     std::vector<BiquadBandCoeffs> coeffs_;
 
     // Not constexpr: std::pow is not guaranteed constexpr in C++23.
-    [[nodiscard]] static FreqPair        Find_F1_F2(double center_freq, double bandwidth_octaves) noexcept;
-    [[nodiscard]] static std::optional<double> SolveRoot(double coeff_a, double coeff_b, double coeff_c) noexcept;
+    [[nodiscard]] static FreqPair Find_F1_F2(double center_freq, double bandwidth_octaves) noexcept;
 };

@@ -529,14 +529,21 @@ void ViPER::DispatchRawParam(
             break;
         }
         case kParamEqualizerBandLevels: {
-            const uint32_t float_count =
-                arr_size / static_cast<uint32_t>(sizeof(float));
+            // arr_size may be either byte count (e.g. 10*4=40) or element
+            // count (e.g. 10).  Values >31 can only be byte counts; values
+            // ≤31 are treated as element counts to handle both conventions.
+            const uint32_t float_count = (arr_size > 31u)
+                ? arr_size / static_cast<uint32_t>(sizeof(float))
+                : arr_size;
             VIPER_LOGI("EQ: bands_levels=%u floats", float_count);
             const auto* src = reinterpret_cast<const float*>(arr);
             const uint32_t n = std::min(float_count,
                 static_cast<uint32_t>(staged_params_.equalizer.band_levels.size()));
             for (uint32_t i = 0; i < n; ++i) {
                 staged_params_.equalizer.band_levels[i] = src[i];
+            }
+            if (staged_params_.equalizer.band_count == 0u && n > 0u) {
+                staged_params_.equalizer.band_count = n;
             }
             break;
         }

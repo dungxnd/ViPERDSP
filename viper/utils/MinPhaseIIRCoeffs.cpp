@@ -84,20 +84,21 @@ bool MinPhaseIIRCoeffs::UpdateCoeffs(const uint32_t bands, const uint32_t sampli
         const double cos_y = std::cos(y);
         const double sin_y = std::sin(y);
 
-        const double b_half = cos_x * cos_x * 0.5;
-        const double sin_y2 = sin_y * sin_y;
-        const double cos_y2 = cos_y * cos_y;
+        // Exact closed-form solution — avoids catastrophic cancellation that
+        // occurs at low frequencies or high sample rates (≥48 kHz) where the
+        // discriminant Δ = sin²(y)·(cos x − cos y)² drops below double
+        // precision.  Derivation: factor Δ = (e−d)(e+d) algebraically:
+        //   e − d = sin²(y),   e + d = (cos x − cos y)²
+        // The stable root |r| < 0.5 is then:
+        //   r = 0.5 · (sin y − |cos x − cos y|) / (sin y + |cos x − cos y|)
+        // Map to TDF-II form (b1=0, b2=−b0):
+        //   b0 = 0.5 − r,  a1 = −(r+0.5)·cos(x)·2,  a2 = 2r
+        const double u = std::abs(cos_x - cos_y);
+        const double v = sin_y; // = sin(y) ≥ 0 for y ∈ [0, π]
+        const double denom = v + u;
 
-        const double d = b_half - cos_x * cos_y + 0.5 - sin_y2;
-        const double e = sin_y2 + (b_half + cos_y2 - cos_x * cos_y - 0.5);
-        const double f = b_half * 0.25 - cos_x * cos_y * 0.25 + 0.125 - sin_y2 * 0.25;
-
-        if (const auto root = SolveRoot(d, e, f); root.has_value()) {
-            const double r = *root;
-            // Map to TDF-II form.  Original DF-I had:
-            //   coeff1 = 2r,  coeff2 = 0.5-r,  coeff3 = (r+0.5)*cos_x*2
-            // TDF-II uses (with b1=0, b2=-b0):
-            //   b0 = coeff2,  a1 = -coeff3,  a2 = coeff1
+        if (denom > 1e-12) {
+            const double r = 0.5 * (v - u) / denom;
             coeffs_[i].b0 = static_cast<float>(0.5 - r);
             coeffs_[i].a1 = static_cast<float>(-(r + 0.5) * cos_x * 2.0);
             coeffs_[i].a2 = static_cast<float>(r + r);
@@ -113,30 +114,4 @@ MinPhaseIIRCoeffs::FreqPair MinPhaseIIRCoeffs::Find_F1_F2(
 ) noexcept {
     const double x = std::pow(2.0, bandwidth_octaves * 0.5);
     return { center_freq / x, center_freq * x };
-}
-
-std::optional<double> MinPhaseIIRCoeffs::SolveRoot(
-    const double coeff_a,
-    const double coeff_b,
-    const double coeff_c
-) noexcept {
-    // Guard against d ≈ 0: would produce ±Inf / NaN that instantly
-    // destabilise the IIR state variables.
-    if (std::abs(coeff_a) < 1e-12) return std::nullopt;
-
-    const double x = (coeff_c - coeff_b * coeff_b / (coeff_a * 4.0)) / coeff_a;
-    if (x >= 0.0) return std::nullopt;
-
-    const double z = std::sqrt(-x);
-    const double y = coeff_b / (coeff_a * 2.0);
-    const double a = -y - z;
-    const double b = z  - y;
-
-    // The product of the two roots equals 0.25, so exactly one root has
-    // |r| < 0.5 (stable pole) and the other |r| > 0.5 (unstable pole).
-    // Always pick the stable one.
-    if (std::abs(a) < 0.5 && std::abs(b) >= 0.5) return a;
-    if (std::abs(b) < 0.5 && std::abs(a) >= 0.5) return b;
-    // Both inside unit circle (rare): prefer the smaller magnitude.
-    return (std::abs(a) < std::abs(b)) ? a : b;
 }
