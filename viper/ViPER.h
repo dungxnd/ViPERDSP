@@ -39,6 +39,15 @@
 
 class ViPER {
 public:
+    using Pipeline = viper::core::DspPipeline<
+        Convolver, VHE, ViPERDDC, SpectrumExtend, IIRFilter,
+        DynamicEQ, ColorfulMusic, StereoImager, DiffSurround,
+        PlaybackGain, MultibandCompressor, FETCompressor, DynamicSystem,
+        TubeSimulator, PsychoacousticBass, ViPERBass, ViPERBassMono,
+        ViPERClarity, Cure, AnalogX, Reverberation, SpeakerCorrection,
+        LUFSTargeting
+    >;
+
     ViPER();
 
     void Process(std::vector<float> &buffer, uint32_t size);
@@ -149,14 +158,6 @@ private:
     // in the planar domain between those two passes.
     viper::core::AudioProcessContext<4096> planar_context_;
 
-    using Pipeline = viper::core::DspPipeline<
-        Convolver, VHE, ViPERDDC, SpectrumExtend, IIRFilter,
-        DynamicEQ, ColorfulMusic, StereoImager, DiffSurround,
-        PlaybackGain, MultibandCompressor, FETCompressor, DynamicSystem,
-        TubeSimulator, PsychoacousticBass, ViPERBass, ViPERBassMono,
-        ViPERClarity, Cure, AnalogX, Reverberation, SpeakerCorrection,
-        LUFSTargeting
-    >;
     Pipeline pipeline_{};
     std::array<SoftwareLimiter, 2> software_limiters_{};
 

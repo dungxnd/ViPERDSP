@@ -145,9 +145,9 @@ void ViPER::ApplyMasterLimiter(const viper::MasterLimiterParams &p) {
     last_applied_.master_limiter = p;
 }
 
-template <typename Effect, typename Field>
-static void ApplyEffectConfig(ViPER::Pipeline& pipeline, Field& field, const typename Effect::Config& p) {
-    pipeline.Get<Effect>().SetConfig(p);
+template <typename Effect, typename PipelineType, typename Field>
+static void ApplyEffectConfig(PipelineType& pipeline, Field& field, const typename Effect::Config& p) {
+    pipeline.template Get<Effect>().SetConfig(p);
     pipeline.RebuildActiveTopology();
     field = p;
 }
