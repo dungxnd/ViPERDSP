@@ -119,6 +119,10 @@ private:
     float adapt_coeff_{0.0f};
     float adaptive_gain_state_{0.0f};
 
+    // Activation soft fade-in ramp
+    float fade_in_gain_{1.0f};
+    float fade_in_step_{0.0f};
+
     // Sub-block adaptive ballistics cache (updated every kAlphaUpdateInterval samples)
     static constexpr uint32_t kAlphaUpdateInterval = 16u;
     uint32_t alpha_update_counter_{0u};

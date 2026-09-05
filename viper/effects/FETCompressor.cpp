@@ -48,6 +48,8 @@ void FETCompressor::Reset() noexcept {
     cached_att_coeff_    = attack_coeff_;
     cached_rel_coeff_    = release_coeff_;
     alpha_update_counter_ = 0u;
+    fade_in_gain_         = 1.0f;
+    fade_in_step_         = 0.0f;
 }
 
 void FETCompressor::Process(float *samples, const uint32_t size) noexcept {
@@ -62,8 +64,17 @@ void FETCompressor::Process(float *samples, const uint32_t size) noexcept {
 
         const double gain_multiplier = ProcessSidechain(sidechain_in);
 
-        samples[i]     *= static_cast<float>(gain_multiplier);
-        samples[i + 1] *= static_cast<float>(gain_multiplier);
+        // Smooth crossfade from 1.0 (dry) to gain_multiplier (compressed) on turn-on
+        const float effective_gain = (fade_in_gain_ < 1.0f)
+            ? std::lerp(1.0f, static_cast<float>(gain_multiplier), fade_in_gain_)
+            : static_cast<float>(gain_multiplier);
+
+        samples[i]     *= effective_gain;
+        samples[i + 1] *= effective_gain;
+
+        if (fade_in_gain_ < 1.0f) [[unlikely]] {
+            fade_in_gain_ = std::min(fade_in_gain_ + fade_in_step_, 1.0f);
+        }
 
         // Continuous parameter smoothing
         smoothed_threshold_ln_ += (target_threshold_ln_ - smoothed_threshold_ln_) * param_smoothing_coeff_;
@@ -84,7 +95,11 @@ double FETCompressor::ProcessSidechain(const double in) noexcept {
         running_peak_sq_ += peak_coeff_ * (in2 - running_peak_sq_);
     }
 
-    const float crest_ratio = std::max(running_peak_sq_ / (running_rms_sq_ + kEpsilonSq), 1.0f);
+    const float crest_ratio = std::clamp(
+        running_peak_sq_ / (running_rms_sq_ + kEpsilonSq),
+        1.0f,
+        25.0f // Realistic peak/RMS power ratio limit (~14 dB peak-to-RMS)
+    );
 
     // 2. Program-Dependent Dynamic Attack & Release
     // Adaptive alpha is recomputed only every kAlphaUpdateInterval samples:
@@ -117,7 +132,7 @@ double FETCompressor::ProcessSidechain(const double in) noexcept {
 
     if (auto_knee_) {
         const float half_thresh = smoothed_threshold_ln_ * 0.5f;
-        const float knee_base   = adaptive_gain_state_ + half_thresh;
+        const float knee_base   = half_thresh;
         knee_width = std::max(-(knee_base * knee_multi_), 0.0f);
     }
 
@@ -152,22 +167,22 @@ double FETCompressor::ProcessSidechain(const double in) noexcept {
     gr_attack_stage_ += cur_att_coeff * (gr_release_stage_ - gr_attack_stage_);
     const float smoothed_gr = gr_attack_stage_;
 
-    // 5. Adaptive Make-Up Gain & Output Scaling
-    const float half_thresh_gr = smoothed_threshold_ln_ * 0.5f;
-    const float adapt_target   = -smoothed_gr - half_thresh_gr - adaptive_gain_state_;
-    adaptive_gain_state_ += adapt_target * adapt_coeff_;
-
+    // 5. Make-Up Gain & Output Scaling
     if (auto_gain_) {
-        float makeup_gain = half_thresh_gr + adaptive_gain_state_;
+        // Standard static auto-makeup gain based on Giannoulis:
+        // Compensate by half the maximum compression depth at 0 dBFS.
+        // smoothed_threshold_ln_ is negative, ratio_slope_ = (1 - 1/R).
+        const float auto_makeup_ln = -smoothed_threshold_ln_ * 0.5f * ratio_slope_;
+        float effective_gain_ln = auto_makeup_ln - smoothed_gr;
 
         if (no_clip_) {
-            const float output_level_ln = log_input - smoothed_gr - makeup_gain;
-            if (output_level_ln > 0.0f) {
-                makeup_gain += output_level_ln; // Prevent clipping over 0 dBFS
-                adaptive_gain_state_ = makeup_gain - half_thresh_gr;
+            // Prevent output level from exceeding 0 dBFS (output_level_ln > 0)
+            const float peak_output_ln = log_input + effective_gain_ln;
+            if (peak_output_ln > 0.0f) {
+                effective_gain_ln -= peak_output_ln;
             }
         }
-        return std::exp(static_cast<double>(-smoothed_gr - makeup_gain));
+        return std::exp(static_cast<double>(effective_gain_ln));
     }
 
     return std::exp(static_cast<double>(smoothed_gain_ln_ - smoothed_gr));
@@ -177,7 +192,6 @@ double FETCompressor::ProcessSidechain(const double in) noexcept {
 
 void FETCompressor::SetConfig(const Config& config) noexcept {
     config_ = config;
-    SetEnable(config.enable);
     SetThreshold(config.threshold);
     SetRatio(config.ratio);
     SetKnee(config.knee);
@@ -194,11 +208,30 @@ void FETCompressor::SetConfig(const Config& config) noexcept {
     SetCrest(config.crest);
     SetAdapt(config.adapt);
     SetNoClip(config.no_clip);
+    SetEnable(config.enable);
 }
 
 void FETCompressor::SetEnable(const bool enable) noexcept {
     config_.enable = enable;
-    enable_ = enable;
+    if (enable_ != enable) {
+        enable_ = enable;
+        if (enable_) {
+            smoothed_threshold_ln_ = target_threshold_ln_;
+            smoothed_gain_ln_      = target_gain_ln_;
+            smoothed_knee_ln_      = target_knee_ln_;
+            gr_release_stage_      = 0.0f;
+            gr_attack_stage_       = 0.0f;
+            running_peak_sq_       = kEpsilonSq;
+            running_rms_sq_        = kEpsilonSq;
+            fade_in_gain_          = 0.0f;
+            fade_in_step_          = (sampling_rate_ > 0)
+                ? (1.0f / (0.015f * static_cast<float>(sampling_rate_)))
+                : 1.0f;
+        } else {
+            fade_in_gain_ = 1.0f;
+            fade_in_step_ = 0.0f;
+        }
+    }
 }
 
 void FETCompressor::SetThreshold(const float value) noexcept {
@@ -306,7 +339,7 @@ void FETCompressor::SetSamplingRate(const uint32_t sampling_rate) noexcept {
 }
 
 void FETCompressor::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
-    if (!IsEnabled() || L.empty()) return;
+    if (!enable_ || L.empty()) return;
 
     for (size_t i = 0u; i < L.size(); ++i) {
         const double sidechain_in = std::max(
@@ -315,8 +348,17 @@ void FETCompressor::ProcessPlanar(std::span<float> L, std::span<float> R) noexce
         );
         const double gain_multiplier = ProcessSidechain(sidechain_in);
 
-        L[i] *= static_cast<float>(gain_multiplier);
-        R[i] *= static_cast<float>(gain_multiplier);
+        // Smooth crossfade from 1.0 (dry) to gain_multiplier (compressed) on turn-on
+        const float effective_gain = (fade_in_gain_ < 1.0f)
+            ? std::lerp(1.0f, static_cast<float>(gain_multiplier), fade_in_gain_)
+            : static_cast<float>(gain_multiplier);
+
+        L[i] *= effective_gain;
+        R[i] *= effective_gain;
+
+        if (fade_in_gain_ < 1.0f) [[unlikely]] {
+            fade_in_gain_ = std::min(fade_in_gain_ + fade_in_step_, 1.0f);
+        }
 
         smoothed_threshold_ln_ += (target_threshold_ln_ - smoothed_threshold_ln_) * param_smoothing_coeff_;
         smoothed_gain_ln_      += (target_gain_ln_      - smoothed_gain_ln_)      * param_smoothing_coeff_;
