@@ -85,7 +85,9 @@ void TubeSimulator::Process(float *buffer, const uint32_t size) noexcept {
 }
 
 void TubeSimulator::Reset() noexcept {
-    const float lp_cutoff = static_cast<float>(sampling_rate_) / 2.0f - 2000.0f;
+    const float max_cutoff = 0.45f * static_cast<float>(sampling_rate_);
+    const float lp_cutoff  = std::clamp(static_cast<float>(sampling_rate_) * 0.5f - 2000.0f, 20.0f, max_cutoff);
+    const float safe_hpf   = std::clamp(hpf_cutoff_hz_, 20.0f, max_cutoff);
 
     const int idx       = static_cast<int>(tube_type_);
     const auto& cfg     = kTubeConfigs[static_cast<std::size_t>(idx) < kTubeConfigs.size()
@@ -94,7 +96,7 @@ void TubeSimulator::Reset() noexcept {
     for (std::size_t ch = 0; ch < 2; ch++) {
         high_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::HighPass,
-            0.0f, hpf_cutoff_hz_, sampling_rate_, 0.717f, false);
+            0.0f, safe_hpf, sampling_rate_, 0.717f, false);
         low_pass_[ch].RefreshFilter(
             MultiBiquad::FilterType::LowPass,
             0.0f, lp_cutoff, sampling_rate_, 0.717f, false);
@@ -104,7 +106,18 @@ void TubeSimulator::Reset() noexcept {
     }
 }
 
+void TubeSimulator::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetTubeType(config.model);
+    SetTubeDrive(config.drive);
+    SetTubeMix(config.mix);
+    SetTubeHpfCutoff(config.hpf_cutoff);
+    SetTubeMode(config.mode);
+}
+
 void TubeSimulator::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (!enable_) Reset();
         enable_ = enable;
@@ -184,3 +197,4 @@ void TubeSimulator::ProcessPlanar(std::span<float> L, std::span<float> R) noexce
         R[i] = static_cast<float>(in_r + harm_r * wet);
     }
 }
+

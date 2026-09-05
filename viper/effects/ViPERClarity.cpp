@@ -44,7 +44,15 @@ void ViPERClarity::Reset() noexcept {
     hifi_.Reset();
 }
 
+void ViPERClarity::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetProcessMode(static_cast<ClarityMode>(config.mode));
+    SetClarityGain(config.gain);
+}
+
 void ViPERClarity::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;
@@ -60,11 +68,7 @@ void ViPERClarity::SetProcessMode(const ClarityMode mode) noexcept {
 
 void ViPERClarity::SetClarityGain(const float value) noexcept {
     gain_ = value;
-    if (process_mode_ == ClarityMode::Ozone) {
-        Reset();
-    } else {
-        SetClarityToFilter();
-    }
+    SetClarityToFilter();
 }
 
 void ViPERClarity::SetClarityToFilter() noexcept {

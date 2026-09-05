@@ -48,7 +48,18 @@ void StereoImager::Reset() noexcept {
     ConfigureCrossovers();
 }
 
+void StereoImager::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetLowWidth(config.low_width);
+    SetMidWidth(config.mid_width);
+    SetHighWidth(config.high_width);
+    SetLowCrossover(config.low_crossover);
+    SetHighCrossover(config.high_crossover);
+}
+
 void StereoImager::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;

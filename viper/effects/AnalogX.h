@@ -3,6 +3,7 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../utils/Harmonic.h"
 #include "../utils/MultiBiquad.h"
 #include <array>
@@ -10,6 +11,8 @@
 
 class AnalogX {
 public:
+    using Config = viper::AnalogXParams;
+
     enum class ProcessingModel { Soft = 0, Medium = 1, Hard = 2 };
 
     AnalogX();
@@ -18,13 +21,17 @@ public:
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset();
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
+
     void SetEnable(bool enable);
     void SetProcessingModel(ProcessingModel model);
     void SetProcessingModel(int model);  // accepts raw int from parameter dispatch
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
+    Config config_{};
     bool enable_ = false;
 
     ProcessingModel processing_model_ = ProcessingModel::Soft;

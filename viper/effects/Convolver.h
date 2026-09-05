@@ -3,6 +3,7 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../utils/PConvNUPC.h"
 #include <atomic>
 #include <cstdint>
@@ -30,6 +31,8 @@
 //   The audio thread never allocates, spins, or holds a lock.
 class Convolver {
 public:
+    using Config = viper::ConvolverParams;
+
     Convolver();
     ~Convolver() = default;
 
@@ -51,6 +54,10 @@ public:
     [[nodiscard]] bool     GetEnable()   const noexcept;
     [[nodiscard]] bool     IsEnabled()   const noexcept { return GetEnable(); }
     [[nodiscard]] uint32_t GetKernelID() const noexcept;
+    [[nodiscard]] uint32_t GetExpectedSize() const noexcept { return expected_size_; }
+
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
 
     void SetEnable(bool enable);
     void SetCrossChannel(float value);
@@ -72,6 +79,7 @@ public:
     void CommitKernelBuffer(uint32_t expected_size, uint32_t expected_crc, uint32_t kernel_id);
 
 private:
+    Config   config_{};
     bool     enable_                    = false;
     bool     is_valid_cross_channel_    = false;
     uint32_t sampling_rate_             = 44100;

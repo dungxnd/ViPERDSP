@@ -16,7 +16,16 @@ void ColorfulMusic::Reset() {
     depth_surround_.SetSamplingRate(sampling_rate_);
 }
 
+void ColorfulMusic::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetWidenValue(config.widening);
+    SetMidImageValue(config.mid_image);
+    SetDepthValue(config.depth);
+}
+
 void ColorfulMusic::SetEnable(const bool enable) {
+    config_.enable = enable;
     if (enabled_ != enable) {
         if (!enabled_) {
             Reset();

@@ -3,6 +3,7 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../utils/Biquad.h"
 #include "../utils/MultiBiquad.h"
 #include <array>
@@ -10,13 +11,18 @@
 
 class SpeakerCorrection {
 public:
+    using Config = viper::SpeakerCorrectionParams;
+
     SpeakerCorrection();
 
     // True planar in-place — no interleave/deinterleave, no scratch buffer.
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
+
     void SetEnable(bool enable) noexcept;
     void SetHighPassCutoff(uint32_t value) noexcept;
     void SetLowPassCutoff(uint32_t value) noexcept;
@@ -25,6 +31,7 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    Config config_{};
     bool enable_{false};
 
     uint32_t sampling_rate_{44100u};

@@ -89,7 +89,17 @@ void PsychoacousticBass::Reset() noexcept {
     ApplyHarmonicCoeffs();
 }
 
+void PsychoacousticBass::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetCutoff(config.cutoff);
+    SetIntensity(config.intensity);
+    SetHarmonicOrder(config.harmonic_order);
+    SetOriginalBassLevel(config.original_level);
+}
+
 void PsychoacousticBass::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;

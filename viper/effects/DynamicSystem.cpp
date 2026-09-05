@@ -15,7 +15,17 @@ void DynamicSystem::Reset() noexcept {
     dynamic_bass_.Reset();
 }
 
+void DynamicSystem::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetXCoeffs(config.x_coeff_low, config.x_coeff_high);
+    SetYCoeffs(config.y_coeff_low, config.y_coeff_high);
+    SetSideGain(config.side_gain_low, config.side_gain_high);
+    SetBassGain(config.strength);
+}
+
 void DynamicSystem::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;

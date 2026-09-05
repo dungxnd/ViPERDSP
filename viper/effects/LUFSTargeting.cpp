@@ -177,7 +177,16 @@ void LUFSTargeting::Reset() noexcept {
     step_size_   = window_size_ / 4u;
 }
 
+void LUFSTargeting::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetTargetLUFS(config.target);
+    SetMaxGain(config.max_gain);
+    SetSpeed(config.speed);
+}
+
 void LUFSTargeting::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;

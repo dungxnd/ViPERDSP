@@ -80,7 +80,11 @@ target_include_directories(ViPERDSP PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_compile_options(ViPERDSP PRIVATE -O3 -flto)
+if (MSVC)
+    target_compile_options(ViPERDSP PRIVATE /O2)
+else ()
+    target_compile_options(ViPERDSP PRIVATE -O3)
+endif ()
 
 if (ANDROID)
     target_link_libraries(ViPERDSP log)

@@ -3,11 +3,14 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include <array>
 #include <cstdint>
 
 class FETCompressor {
 public:
+    using Config = viper::FetCompressorParams;
+
     FETCompressor();
 
     // Main stereo interleaved processing: [L0, R0, L1, R1, ...]
@@ -16,8 +19,10 @@ public:
     void Reset() noexcept;
 
     // Enable / Disable
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
     void SetEnable(bool enable) noexcept;
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
 
     // Threshold: normalized [0.0 (0 dB) to 1.0 (-60 dB)] or explicit dB [-60.0 to 0.0]
     void SetThreshold(float value) noexcept;
@@ -63,7 +68,8 @@ private:
     [[nodiscard]] static float CalculateAlpha(uint32_t sampling_rate, float time_seconds) noexcept;
 
     // State / Config flags
-    bool enable_{true};
+    Config config_{};
+    bool enable_{false};
     bool auto_knee_{true};
     bool auto_gain_{true};
     bool auto_attack_{true};

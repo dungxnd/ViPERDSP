@@ -251,7 +251,7 @@ struct FetCompressorParams {
 struct BassParams {
     bool enable = false;
     int mode = 0;
-    uint32_t frequency = 0; // Hz
+    uint32_t frequency = 60u; // Hz
     float gain = 0.0f;      // 0..1
     bool anti_pop = false;
 
@@ -266,7 +266,7 @@ struct BassParams {
 struct BassMonoParams {
     bool enable = false;
     int mode = 0;
-    uint32_t frequency = 0;
+    uint32_t frequency = 60u;
     float gain = 0.0f;
     bool anti_pop = false;
 

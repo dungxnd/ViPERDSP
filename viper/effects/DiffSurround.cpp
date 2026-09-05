@@ -1,5 +1,6 @@
 #include "DiffSurround.h"
 #include <algorithm>
+#include <vector>
 
 DiffSurround::DiffSurround() {
     Reset();
@@ -25,7 +26,17 @@ void DiffSurround::Reset() {
     }
 }
 
+void DiffSurround::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetDelayTime(config.delay);
+    SetReverse(config.reverse);
+    SetWetDryMix(config.wet_dry_mix);
+    SetLPCutoff(config.lp_cutoff);
+}
+
 void DiffSurround::SetEnable(const bool enable) {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (!enable_) Reset();
         enable_ = enable;
@@ -101,3 +112,19 @@ void DiffSurround::ProcessPlanar(std::span<float> L, std::span<float> R) noexcep
         ch[delayed_ch][i] = dry * delayed_in + wet * delayed_out;
     }
 }
+
+void DiffSurround::Process(float* samples, const uint32_t size) noexcept {
+    if (!samples || size == 0) return;
+    std::vector<float> l(size);
+    std::vector<float> r(size);
+    for (uint32_t i = 0; i < size; ++i) {
+        l[i] = samples[i * 2u];
+        r[i] = samples[i * 2u + 1u];
+    }
+    ProcessPlanar(l, r);
+    for (uint32_t i = 0; i < size; ++i) {
+        samples[i * 2u] = l[i];
+        samples[i * 2u + 1u] = r[i];
+    }
+}
+

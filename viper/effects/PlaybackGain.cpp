@@ -1,6 +1,7 @@
 #include "PlaybackGain.h"
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 PlaybackGain::PlaybackGain() {
     // All members already initialized by in-class defaults.
@@ -9,6 +10,8 @@ PlaybackGain::PlaybackGain() {
 }
 
 void PlaybackGain::Reset() noexcept {
+    biquad1_.Reset();
+    biquad2_.Reset();
     biquad1_.SetBandPassParameter(kBandpassFreq, sampling_rate_, kBandpassQ);
     biquad2_.SetBandPassParameter(kBandpassFreq, sampling_rate_, kBandpassQ);
     current_gain_l_ = 1.0f;
@@ -16,7 +19,16 @@ void PlaybackGain::Reset() noexcept {
     ramp_progress_  = 0;
 }
 
+void PlaybackGain::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetRatio(config.strength);
+    SetVolume(config.output_threshold);
+    SetMaxGainFactor(config.max_gain);
+}
+
 void PlaybackGain::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;
@@ -94,5 +106,20 @@ void PlaybackGain::ProcessPlanar(std::span<float> L, std::span<float> R) noexcep
                 0.0f, max_gain_factor_
             );
         }
+    }
+}
+
+void PlaybackGain::Process(float* samples, const uint32_t size) noexcept {
+    if (!samples || size == 0) return;
+    std::vector<float> l(size);
+    std::vector<float> r(size);
+    for (uint32_t i = 0; i < size; ++i) {
+        l[i] = samples[i * 2u];
+        r[i] = samples[i * 2u + 1u];
+    }
+    ProcessPlanar(l, r);
+    for (uint32_t i = 0; i < size; ++i) {
+        samples[i * 2u] = l[i];
+        samples[i * 2u + 1u] = r[i];
     }
 }

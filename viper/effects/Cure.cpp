@@ -21,7 +21,14 @@ Crossfeed::Preset Cure::GetPreset() const noexcept {
     return crossfeed_.GetPreset();
 }
 
+void Cure::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetPreset(config.crossfeed_preset);
+}
+
 void Cure::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enabled_ != enable) {
         if (enable) Reset();
         enabled_ = enable;

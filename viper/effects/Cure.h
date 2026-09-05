@@ -3,18 +3,23 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../utils/Crossfeed.h"
 #include "../utils/PassFilter.h"
 #include <array>
 
 class Cure {
 public:
+    using Config = viper::CureParams;
+
     Cure() = default;
 
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enabled_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
 
     [[nodiscard]] uint32_t GetCutoff() const noexcept;
     [[nodiscard]] float GetFeedback() const noexcept;
@@ -28,6 +33,7 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    Config config_{};
     bool enabled_{false};
 
     Crossfeed crossfeed_{};

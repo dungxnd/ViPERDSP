@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ViPERBassCommon.h"
+#include "../include/ViPERParams.h"
 #include "../utils/Biquad.h"
 #include "../utils/Polyphase.h"
 #include "../utils/Subwoofer.h"
@@ -12,6 +13,7 @@
 
 class ViPERBassMono {
 public:
+    using Config = viper::BassMonoParams;
     using ProcessMode = BassProcessMode;
     // 2-D view over interleaved stereo audio: [frame, channel].
     using StereoView = std::mdspan<float, std::dextents<size_t, 2>, std::layout_right>;
@@ -21,7 +23,10 @@ public:
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
+
     void SetEnable(bool enable) noexcept;
     void SetProcessMode(ProcessMode mode) noexcept;
     void SetBassFactor(float value) noexcept;
@@ -33,6 +38,7 @@ private:
     // samples: interleaved stereo, size = frame count (not sample count).
     void Process(std::span<float> samples) noexcept;
 
+    Config config_{};
     bool enable_{false};
 
     ProcessMode process_mode_{ProcessMode::NaturalBass};

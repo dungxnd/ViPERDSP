@@ -2,6 +2,7 @@
 
 #include "AudioFIFO.h"
 #include "PFFFTRegistry.h"
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>

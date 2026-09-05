@@ -3,6 +3,7 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../utils/Biquad.h"
 #include <array>
 #include <cstdint>
@@ -10,12 +11,18 @@
 
 class PlaybackGain {
 public:
+    using Config = viper::PlaybackGainControlParams;
+
     PlaybackGain();
 
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
+    void Process(float* samples, uint32_t size) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
+
     void SetEnable(bool enable) noexcept;
     void SetMaxGainFactor(float max_gain_factor) noexcept;
     void SetRatio(float ratio) noexcept;
@@ -23,6 +30,7 @@ public:
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
 private:
+    Config config_{};
     static constexpr float  kWarmupSeconds = 0.4f;
     static constexpr float  kBandpassFreq  = 2200.0f;
     static constexpr float  kBandpassQ     = 0.33f;

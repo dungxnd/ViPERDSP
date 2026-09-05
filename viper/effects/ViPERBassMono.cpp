@@ -128,20 +128,23 @@ void ViPERBassMono::ProcessPureBassPlus(float* const L, float* const R,
 
 void ViPERBassMono::ProcessSubwoofer(std::span<float> samples, StereoView audio) noexcept {
     if (anti_pop_ >= 1.0f) [[likely]] {
-        subwoofer_.Process(samples);
+        subwoofer_.Process(samples.data(), static_cast<uint32_t>(audio.extent(0)));
         return;
     }
 
     // Crossfade dry→wet over anti_pop_ ramp to eliminate the onset transient.
     const uint32_t size         = static_cast<uint32_t>(audio.extent(0));
     const uint32_t sample_count = size * 2u;
-    std::copy_n(samples.data(), sample_count, scratch_buffer_.data());
-    subwoofer_.Process(scratch_buffer_.data(), size);
+    if (sample_count > staging_buffer_.size()) return;
 
-    const StereoView wet(scratch_buffer_.data(), size, 2u);
+    std::copy_n(samples.data(), sample_count, staging_buffer_.data());
+    subwoofer_.Process(samples.data(), size);
+
+    const StereoView dry(staging_buffer_.data(), size, 2u);
+    const StereoView wet(samples.data(), size, 2u);
     for (size_t f = 0; f < size; ++f) {
-        audio[f, 0] += anti_pop_ * (wet[f, 0] - audio[f, 0]);
-        audio[f, 1] += anti_pop_ * (wet[f, 1] - audio[f, 1]);
+        audio[f, 0] = dry[f, 0] + anti_pop_ * (wet[f, 0] - dry[f, 0]);
+        audio[f, 1] = dry[f, 1] + anti_pop_ * (wet[f, 1] - dry[f, 1]);
         anti_pop_ = std::min(anti_pop_ + anti_pop_step_, 1.0f);
     }
 }
@@ -213,7 +216,17 @@ void ViPERBassMono::Reset() noexcept {
     dc_y1_ = 0.0f;
 }
 
+void ViPERBassMono::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetProcessMode(static_cast<ProcessMode>(config.mode));
+    SetFrequency(config.frequency);
+    SetBassFactor(config.gain);
+    SetAntiPop(config.anti_pop);
+}
+
 void ViPERBassMono::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;
@@ -223,6 +236,7 @@ void ViPERBassMono::SetEnable(const bool enable) noexcept {
 void ViPERBassMono::SetProcessMode(const ProcessMode mode) noexcept {
     const auto safe_mode = static_cast<ProcessMode>(
         std::clamp(std::to_underlying(mode), uint8_t{0}, uint8_t{2}));
+    config_.mode = std::to_underlying(safe_mode);
     if (process_mode_ != safe_mode) {
         process_mode_ = safe_mode;
         Reset();
@@ -230,6 +244,7 @@ void ViPERBassMono::SetProcessMode(const ProcessMode mode) noexcept {
 }
 
 void ViPERBassMono::SetBassFactor(const float value) noexcept {
+    config_.gain = value;
     if (bass_factor_ != value) {
         bass_factor_ = value;
         subwoofer_.SetBassGain(sampling_rate_, bass_factor_ * 2.5f);
@@ -237,10 +252,12 @@ void ViPERBassMono::SetBassFactor(const float value) noexcept {
 }
 
 void ViPERBassMono::SetFrequency(const uint32_t value) noexcept {
-    if (frequency_ != value) {
-        frequency_ = value;
+    const uint32_t safe_val = std::clamp(value, 30u, 300u);
+    config_.frequency = safe_val;
+    if (frequency_ != safe_val) {
+        frequency_ = safe_val;
         // Update the linear-phase FIR crossover cutoff for PureBass+ mode.
-        polyphase_.SetCutoffFrequency(static_cast<float>(value));
+        polyphase_.SetCutoffFrequency(static_cast<float>(safe_val));
         // Keep biquad in sync for NaturalBass mode.
         biquad_.SetLowPassParameter(
             static_cast<float>(frequency_), sampling_rate_, 0.53f);

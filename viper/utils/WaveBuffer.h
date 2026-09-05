@@ -6,7 +6,7 @@
 
 class WaveBuffer {
 public:
-    static constexpr size_t kMaxCapacity = 8192u;
+    static constexpr size_t kMaxCapacity = 16384u;
 
     WaveBuffer(uint32_t channels, uint32_t length);
 

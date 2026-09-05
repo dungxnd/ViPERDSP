@@ -175,7 +175,29 @@ double FETCompressor::ProcessSidechain(const double in) noexcept {
 
 // ---------------- Parameter Setters ----------------
 
+void FETCompressor::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetThreshold(config.threshold);
+    SetRatio(config.ratio);
+    SetKnee(config.knee);
+    SetKneeAuto(config.knee_auto);
+    SetGain(config.gain);
+    SetGainAuto(config.gain_auto);
+    SetAttack(config.attack);
+    SetAttackAuto(config.attack_auto);
+    SetRelease(config.release);
+    SetReleaseAuto(config.release_auto);
+    SetKneeMulti(config.knee_multi);
+    SetMaxAttack(config.max_attack);
+    SetMaxRelease(config.max_release);
+    SetCrest(config.crest);
+    SetAdapt(config.adapt);
+    SetNoClip(config.no_clip);
+}
+
 void FETCompressor::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     enable_ = enable;
 }
 

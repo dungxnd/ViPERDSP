@@ -3,18 +3,24 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../utils/DynamicBass.h"
 #include <array>
 #include <cstdint>
 
 class DynamicSystem {
 public:
+    using Config = viper::DynamicSystemParams;
+
     DynamicSystem();
 
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
+
     void SetEnable(bool enable) noexcept;
     void SetBassGain(float gain) noexcept;
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
@@ -25,6 +31,7 @@ public:
 private:
     void Process(float *samples, uint32_t size) noexcept;
 
+    Config config_{};
     bool enable_{false};
 
     uint32_t sampling_rate_{44100u};

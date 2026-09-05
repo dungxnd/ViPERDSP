@@ -3,6 +3,7 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../utils/HiFi.h"
 #include "../utils/HighShelf.h"
 #include "../utils/NoiseSharpening.h"
@@ -21,12 +22,17 @@ public:
         XHIFI   = XHiFi,
     };
 
+    using Config = viper::ClarityParams;
+
     ViPERClarity();
 
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
+
     void SetEnable(bool enable) noexcept;
     void SetProcessMode(ClarityMode mode) noexcept;
     void SetClarityGain(float value) noexcept;
@@ -36,6 +42,7 @@ public:
 private:
     void Process(float *samples, uint32_t size) noexcept;
 
+    Config      config_{};
     bool enable_{false};
 
     ClarityMode process_mode_{ClarityMode::Natural};

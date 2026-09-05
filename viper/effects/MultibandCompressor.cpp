@@ -24,7 +24,39 @@ void MultibandCompressor::Reset() noexcept {
     ConfigureCrossovers();
 }
 
+void MultibandCompressor::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetBandCount(config.band_count);
+    if (config.band_count > 1u) {
+        for (uint32_t i = 0; i < (config.band_count - 1u) && i < config.crossover_frequencies.size(); ++i) {
+            SetCrossoverFrequency(i, config.crossover_frequencies[i]);
+        }
+    }
+    for (uint32_t i = 0; i < config.band_count && i < config.bands.size(); i++) {
+        const auto &b = config.bands[i];
+        SetBandEnable(i, b.enable);
+        SetBandThreshold(i, b.threshold);
+        SetBandRatio(i, b.ratio);
+        SetBandKnee(i, b.knee);
+        SetBandKneeAuto(i, b.knee_auto);
+        SetBandGain(i, b.gain);
+        SetBandGainAuto(i, b.gain_auto);
+        SetBandAttack(i, b.attack);
+        SetBandAttackAuto(i, b.attack_auto);
+        SetBandRelease(i, b.release);
+        SetBandReleaseAuto(i, b.release_auto);
+        SetBandKneeMulti(i, b.knee_multi);
+        SetBandMaxAttack(i, b.max_attack);
+        SetBandMaxRelease(i, b.max_release);
+        SetBandCrest(i, b.crest);
+        SetBandAdapt(i, b.adapt);
+        SetBandNoClip(i, b.no_clip);
+    }
+}
+
 void MultibandCompressor::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;

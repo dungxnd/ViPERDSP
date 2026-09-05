@@ -3,6 +3,7 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../utils/QuadricTube.h"
 #include "../utils/QuadricTubeWDF.h"
 #include "../utils/MultiBiquad.h"
@@ -11,6 +12,8 @@
 
 class TubeSimulator {
 public:
+    using Config = viper::TubeSimulatorParams;
+
     // Model 0 = 12AX7 (default, high-gain)
     // Model 1 = 6N1P  (Soviet medium-gain, warm H2 character)
     // Model 2 = 12AU7 (clean, low-distortion, high headroom)
@@ -34,7 +37,10 @@ public:
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
+
     void SetEnable(bool enable) noexcept;
     void SetTubeType(int model) noexcept;
     void SetTubeMode(int mode) noexcept;
@@ -43,9 +49,11 @@ public:
     void SetTubeHpfCutoff(float cutoff_hz) noexcept;  // [20 Hz – 250 Hz]; default 120 Hz
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
 
-private:
     void Process(float *buffer, uint32_t size) noexcept;
 
+private:
+
+    Config   config_{};
     bool     enable_{false};
     TubeType tube_type_{TubeType::k12AX7};
     TubeMode tube_mode_{TubeMode::kStatic};

@@ -139,7 +139,14 @@ void Convolver::Reset() {
 bool     Convolver::GetEnable()   const noexcept { return enable_;    }
 uint32_t Convolver::GetKernelID() const noexcept { return kernel_id_; }
 
+void Convolver::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetCrossChannel(config.cross_channel);
+}
+
 void Convolver::SetEnable(const bool enable) {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;
@@ -255,6 +262,7 @@ void Convolver::SetKernelStereo(
 }
 
 void Convolver::SetCrossChannel(float value) {
+    config_.cross_channel = value;
     if (value <= 0.0f) {
         is_valid_cross_channel_ = false;
         return;
@@ -317,7 +325,7 @@ void Convolver::CommitKernelBuffer(
 
     const auto* const raw = reinterpret_cast<const std::byte*>(kernel_buffer_.data());
     const uint32_t calculated_crc = Crc32(reinterpret_cast<const uint8_t*>(raw), current_size_ * 4);
-    if (channel_count_ - 1 > 1 || calculated_crc != expected_crc) {
+    if (channel_count_ - 1 > 1 || (expected_crc != 0 && calculated_crc != expected_crc)) {
         ClearKernelBuffer();
         return;
     }

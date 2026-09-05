@@ -30,28 +30,35 @@ template <typename T>
 class TripleBufferedState {
 public:
     TripleBufferedState() noexcept {
-        shared_idx_.store(0u, std::memory_order_relaxed);
+        shared_state_.store(0u, std::memory_order_relaxed);
     }
 
     // Writer thread (IPC / Binder) — Lock-free, Wait-free
     void Update(const T& new_state) noexcept {
         buffers_[write_idx_] = new_state;
-        // Atomically exchange our write slot with the shared slot so the
-        // RT thread can fetch it.  acq_rel: acquire to see any prior reader
-        // exchange; release so the buffer write is visible.
-        write_idx_ = shared_idx_.exchange(write_idx_, std::memory_order_acq_rel);
-        has_new_data_.store(true, std::memory_order_release);
+        const uint8_t prev = shared_state_.exchange(
+            static_cast<uint8_t>(write_idx_ | kDirtyFlag),
+            std::memory_order_acq_rel
+        );
+        write_idx_ = prev & kIndexMask;
     }
 
     // Reader thread (RT Audio) — Lock-free, Wait-free
     [[nodiscard]] bool HasPendingUpdate() const noexcept {
-        return has_new_data_.load(std::memory_order_acquire);
+        return (shared_state_.load(std::memory_order_acquire) & kDirtyFlag) != 0;
     }
 
     [[nodiscard]] const T& ReadLatest() noexcept {
-        if (has_new_data_.exchange(false, std::memory_order_acq_rel)) {
-            // Atomically take the published slot; give our old read slot back.
-            read_idx_ = shared_idx_.exchange(read_idx_, std::memory_order_acq_rel);
+        uint8_t curr = shared_state_.load(std::memory_order_acquire);
+        while (curr & kDirtyFlag) {
+            if (shared_state_.compare_exchange_weak(
+                    curr,
+                    read_idx_,
+                    std::memory_order_acq_rel,
+                    std::memory_order_acquire)) {
+                read_idx_ = curr & kIndexMask;
+                break;
+            }
         }
         return buffers_[read_idx_];
     }
@@ -59,10 +66,12 @@ public:
 private:
     alignas(64) std::array<T, 3> buffers_{};
 
-    // shared_idx_ is the "mailbox" between writer and reader threads.
-    std::atomic<uint8_t> shared_idx_{0u};
-    // has_new_data_ signals the RT thread that a new snapshot is available.
-    std::atomic<bool> has_new_data_{false};
+    static constexpr uint8_t kIndexMask = 0x03u;
+    static constexpr uint8_t kDirtyFlag = 0x80u;
+
+    // shared_state_ holds the published buffer index (bits 0-1) and dirty flag (bit 7)
+    // packed together so publishing and consumption are single atomic operations.
+    std::atomic<uint8_t> shared_state_{0u};
 
     // write_idx_ is accessed exclusively by the writer (IPC thread).
     // read_idx_  is accessed exclusively by the reader (RT audio thread).

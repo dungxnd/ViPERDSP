@@ -9,7 +9,9 @@
 
 #include "ViPERParams.h"
 #include "core/AudioContext.h"
+#include "core/DspPipeline.h"
 #include "core/ParamExchange.h"
+#include "core/RawParamAdapter.h"
 #include "effects/AnalogX.h"
 #include "effects/ColorfulMusic.h"
 #include "effects/Convolver.h"
@@ -100,8 +102,11 @@ public:
     [[nodiscard]] uint32_t GetSamplingRate() const { return sampling_rate_; }
     [[nodiscard]] uint64_t GetProcessedFrames() const { return process_frame_count_; }
     [[nodiscard]] uint32_t GetConvolverKernelID() const {
-        return convolver_.GetKernelID();
+        return pipeline_.Get<Convolver>().GetKernelID();
     }
+
+    template <typename T> [[nodiscard]] T& GetEffect() noexcept { return pipeline_.Get<T>(); }
+    template <typename T> [[nodiscard]] const T& GetEffect() const noexcept { return pipeline_.Get<T>(); }
 
     // Updating the sample rate requires rebuilding all IIR/filter coefficients.
     // RequestEffectsReset() schedules a full ResetAllEffects() on the next
@@ -144,77 +149,17 @@ private:
     // in the planar domain between those two passes.
     viper::core::AudioProcessContext<4096> planar_context_;
 
-    // Effects
-    Convolver convolver_;
-    VHE vhe_;
-    ViPERDDC viper_ddc_;
-    SpectrumExtend spectrum_extend_;
-    StereoImager stereo_imager_;
-    IIRFilter iir_filter_;
-    DynamicEQ dynamic_eq_;
-    ColorfulMusic colorful_music_;
-    Reverberation reverberation_;
-    PlaybackGain playback_gain_;
-    LUFSTargeting lufs_targeting_;
-    FETCompressor fet_compressor_;
-    MultibandCompressor multiband_compressor_;
-    DynamicSystem dynamic_system_;
-    ViPERBass viper_bass_;
-    ViPERBassMono viper_bass_mono_;
-    PsychoacousticBass psychoacoustic_bass_;
-    ViPERClarity viper_clarity_;
-    DiffSurround diff_surround_;
-    Cure cure_;
-    TubeSimulator tube_simulator_;
-    AnalogX analog_x_;
-    SpeakerCorrection speaker_correction_;
-    std::array<SoftwareLimiter, 2> software_limiters_;
-
-    // Tracks the last snapshot successfully applied to effects (delta-check
-    // guard inside ApplyParamsToEffects).
-    viper::ViPERParams last_applied_;
-
-    // ── DRY effect tuple for fold-expression lifecycle ops ─────────────────
-    // Contains non-owning pointers to the named effect members above so that
-    // ResetAllEffects() and the Process() DSP chain collapse to single fold
-    // expressions.  Populated at the end of the ViPER constructor.
-    template <typename... Effects>
-    using EffectPtrTuple = std::tuple<Effects*...>;
-
-    EffectPtrTuple<
+    using Pipeline = viper::core::DspPipeline<
         Convolver, VHE, ViPERDDC, SpectrumExtend, IIRFilter,
         DynamicEQ, ColorfulMusic, StereoImager, DiffSurround,
         PlaybackGain, MultibandCompressor, FETCompressor, DynamicSystem,
         TubeSimulator, PsychoacousticBass, ViPERBass, ViPERBassMono,
         ViPERClarity, Cure, AnalogX, Reverberation, SpeakerCorrection,
         LUFSTargeting
-    > effect_ptrs_;
+    >;
+    Pipeline pipeline_{};
+    std::array<SoftwareLimiter, 2> software_limiters_{};
 
-    // ── Active-stage compacted pipeline dispatcher ─────────────────────────
-    // Rebuilt whenever parameters change (enabled-set changes).
-    // Only enabled effects appear — zero dispatch overhead for disabled stages.
-    struct PipelineStage {
-        void* instance{nullptr};
-        void (*process_fn)(void* instance, std::span<float> L, std::span<float> R) noexcept {nullptr};
-    };
-    static constexpr size_t kMaxPipelineStages = 24u;
-    std::array<PipelineStage, kMaxPipelineStages> active_stages_{};
-    size_t active_stage_count_{0u};
-
-    template <typename T>
-    static void InvokeStage(void* inst, std::span<float> L, std::span<float> R) noexcept {
-        static_cast<T*>(inst)->ProcessPlanar(L, R);
-    }
-
-    template <typename T>
-    void AddStageIfEnabled(T& effect) noexcept {
-        if (effect.IsEnabled()) {
-            active_stages_[active_stage_count_++] = PipelineStage{
-                .instance   = &effect,
-                .process_fn = &InvokeStage<T>
-            };
-        }
-    }
-
-    void RebuildActivePipelineTopology() noexcept;
+    // Tracks the last snapshot successfully applied to effects
+    viper::ViPERParams last_applied_{};
 };

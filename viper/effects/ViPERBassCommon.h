@@ -22,7 +22,7 @@ enum class BassProcessMode : uint8_t {
 // knee: linear threshold below which signal passes unchanged.
 // Note: ceiling = knee + 1.0 (not a hard 0 dBFS limiter; by design).
 // ---------------------------------------------------------------------------
-[[nodiscard]] constexpr float BassSoftClip(const float v, const float knee) noexcept {
+[[nodiscard]] inline float BassSoftClip(const float v, const float knee) noexcept {
     const float drive = std::fabs(v);
     if (drive <= knee) [[likely]] return v;
     const float over   = drive - knee;

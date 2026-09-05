@@ -117,11 +117,18 @@ void VHE::Reset() {
     conv_right_.LoadKernel(right_buf.data(), k.size);
 }
 
+void VHE::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetEffectLevel(config.quality);
+}
+
 bool VHE::GetEnable() const noexcept {
     return enable_;
 }
 
 void VHE::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         enable_ = enable;
         if (enable_) Reset();

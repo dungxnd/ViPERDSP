@@ -42,9 +42,9 @@ void MultiBiquad::RefreshFilter(const FilterType type, const FilterParams& p) {
     double y;
     double z;
     if (type == FT::LowShelf || type == FT::HighShelf) {
-        y = sin_omega / 2.0
-            * std::sqrt((1.0 / gain + gain) * (1.0 / q_factor - 1.0) + 2.0);
-        z = std::sqrt(gain) * 2.0 * y;
+        const double alpha = sin_omega / (2.0 * q_factor);
+        z = 2.0 * std::sqrt(gain) * alpha;
+        y = alpha;
     } else if (p.is_bandwidth) {
         y = std::sinh(q_factor * std::log(2.0) * omega / 2.0 / sin_omega) * sin_omega;
         z = -1.0;

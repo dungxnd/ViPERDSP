@@ -1,6 +1,7 @@
 #include "WaveBuffer.h"
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <ranges>
 
 WaveBuffer::WaveBuffer(const uint32_t channels, [[maybe_unused]] const uint32_t length)
@@ -35,7 +36,7 @@ uint32_t WaveBuffer::PopSamples(const uint32_t size, const bool reset_idx) noexc
 
     if (const uint32_t needed = channels_ * size; needed <= index_) {
         index_ -= needed;
-        std::copy_n(buffer_.data() + needed, index_, buffer_.data());
+        std::memmove(buffer_.data(), buffer_.data() + needed, index_ * sizeof(float));
         return size;
     }
 
@@ -54,7 +55,7 @@ uint32_t WaveBuffer::PopSamples(float *dest, const uint32_t size, const bool res
     if (const uint32_t needed = channels_ * size; needed <= index_) {
         std::copy_n(buffer_.data(), needed, dest);
         index_ -= needed;
-        std::copy_n(buffer_.data() + needed, index_, buffer_.data());
+        std::memmove(buffer_.data(), buffer_.data() + needed, index_ * sizeof(float));
         return size;
     }
 
@@ -82,7 +83,7 @@ bool WaveBuffer::PushSamples(const float *source, const uint32_t size) {
 bool WaveBuffer::PushZeros(const uint32_t size) {
     if (size > 0) {
         const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
-        if (required > kMaxCapacity) { return true; }
+        if (required > kMaxCapacity) { return false; }
         std::fill_n(buffer_.data() + index_, channels_ * size, 0.0f);
         index_ += channels_ * size;
     }
@@ -93,7 +94,7 @@ float *WaveBuffer::PushZerosGetBuffer(const uint32_t size) {
     const uint32_t old_idx = index_;
     if (size > 0) {
         const std::size_t required = static_cast<std::size_t>(channels_) * size + index_;
-        if (required > kMaxCapacity) { return buffer_.data() + old_idx; }
+        if (required > kMaxCapacity) { return nullptr; }
         std::fill_n(buffer_.data() + index_, channels_ * size, 0.0f);
         index_ += channels_ * size;
     }

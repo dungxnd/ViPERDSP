@@ -1,4 +1,5 @@
 #include "NoiseSharpening.h"
+#include <algorithm>
 
 NoiseSharpening::NoiseSharpening() noexcept {
     Reset();
@@ -32,10 +33,12 @@ void NoiseSharpening::Process(float* buffer, const uint32_t size) noexcept {
 }
 
 void NoiseSharpening::Reset() noexcept {
+    const float max_cutoff = static_cast<float>(sampling_rate_) * 0.45f;
+    const float cutoff = std::clamp(
+        static_cast<float>(sampling_rate_ / 2.0 - 1000.0), 20.0f, max_cutoff
+    );
     for (auto& f : filters_) {
-        f.SetLowPassFilterBW(
-            static_cast<float>(sampling_rate_ / 2.0 - 1000.0), sampling_rate_
-        );
+        f.SetLowPassFilterBW(cutoff, sampling_rate_);
         f.Mute();
     }
     in_.fill(0.0f);

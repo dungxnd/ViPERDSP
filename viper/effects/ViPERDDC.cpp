@@ -4,12 +4,33 @@
 
 ViPERDDC::ViPERDDC() = default;
 
+void ViPERDDC::ConsumeCoeffsSwap() noexcept {
+    if (!swap_pending_.load(std::memory_order_acquire)) return;
+
+    std::swap(active_coeffs_, staging_coeffs_);
+    arr_size_      = active_coeffs_ ? active_coeffs_->arr_size : 0u;
+    set_coeffs_ok_ = (arr_size_ > 0);
+
+    x1_l_.assign(arr_size_, 0.0f);
+    x1_r_.assign(arr_size_, 0.0f);
+    x2_l_.assign(arr_size_, 0.0f);
+    x2_r_.assign(arr_size_, 0.0f);
+    y1_l_.assign(arr_size_, 0.0f);
+    y1_r_.assign(arr_size_, 0.0f);
+    y2_l_.assign(arr_size_, 0.0f);
+    y2_r_.assign(arr_size_, 0.0f);
+
+    swap_pending_.store(false, std::memory_order_release);
+}
+
 void ViPERDDC::Process(float *samples, const uint32_t size) noexcept {
-    if (!enable_ || !set_coeffs_ok_ || arr_size_ == 0) return;
+    if (!IsEnabled() || size == 0) return;
+    ConsumeCoeffsSwap();
+    if (!set_coeffs_ok_ || arr_size_ == 0) return;
 
     const std::vector<std::array<float, 5>> *coeffs_arr = nullptr;
-    if      (sampling_rate_ == 44100u) coeffs_arr = &coeffs_arr44100_;
-    else if (sampling_rate_ == 48000u) coeffs_arr = &coeffs_arr48000_;
+    if      (sampling_rate_ == 44100u) coeffs_arr = &active_coeffs_->coeffs_44100;
+    else if (sampling_rate_ == 48000u) coeffs_arr = &active_coeffs_->coeffs_48000;
     else {
         VIPER_LOGD("ViPERDDC: Unsupported sampling rate: %d", sampling_rate_);
         return;
@@ -46,6 +67,7 @@ void ViPERDDC::Process(float *samples, const uint32_t size) noexcept {
 }
 
 void ViPERDDC::Reset() noexcept {
+    ConsumeCoeffsSwap();
     if (!set_coeffs_ok_ || arr_size_ == 0) return;
 
     std::ranges::fill(x1_l_, 0.0f);
@@ -58,10 +80,15 @@ void ViPERDDC::Reset() noexcept {
     std::ranges::fill(y2_r_, 0.0f);
 }
 
+void ViPERDDC::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+}
+
 void ViPERDDC::SetEnable(const bool enable) noexcept {
-    if (enable_ != enable) {
-        enable_ = enable;
-        if (enable_) Reset();
+    if (config_.enable != enable) {
+        config_.enable = enable;
+        if (enable) Reset();
     }
 }
 
@@ -70,28 +97,25 @@ void ViPERDDC::SetCoeffs(
     const float *coeffs_44100,
     const float *coeffs_48000
 ) {
-    ReleaseResources();
-    if (coeffs_size == 0) return;
+    auto new_coeffs = std::make_unique<DdcCoeffs>();
+    if (coeffs_size > 0 && coeffs_44100 && coeffs_48000) {
+        new_coeffs->arr_size = coeffs_size / 5;
+        new_coeffs->coeffs_44100.resize(new_coeffs->arr_size);
+        new_coeffs->coeffs_48000.resize(new_coeffs->arr_size);
 
-    arr_size_ = coeffs_size / 5;
-    coeffs_arr44100_.resize(arr_size_);
-    coeffs_arr48000_.resize(arr_size_);
-
-    for (uint32_t i = 0; i < arr_size_; i++) {
-        std::copy_n(coeffs_44100 + i * 5, 5, coeffs_arr44100_[i].begin());
-        std::copy_n(coeffs_48000 + i * 5, 5, coeffs_arr48000_[i].begin());
+        for (uint32_t i = 0; i < new_coeffs->arr_size; i++) {
+            std::copy_n(coeffs_44100 + i * 5, 5, new_coeffs->coeffs_44100[i].begin());
+            std::copy_n(coeffs_48000 + i * 5, 5, new_coeffs->coeffs_48000[i].begin());
+        }
     }
 
-    x1_l_.assign(arr_size_, 0.0f);
-    x1_r_.assign(arr_size_, 0.0f);
-    x2_l_.assign(arr_size_, 0.0f);
-    x2_r_.assign(arr_size_, 0.0f);
-    y1_l_.assign(arr_size_, 0.0f);
-    y1_r_.assign(arr_size_, 0.0f);
-    y2_l_.assign(arr_size_, 0.0f);
-    y2_r_.assign(arr_size_, 0.0f);
+    const std::lock_guard lock(stage_mutex_);
+    while (swap_pending_.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
 
-    set_coeffs_ok_ = true;
+    staging_coeffs_ = std::move(new_coeffs);
+    swap_pending_.store(true, std::memory_order_release);
 }
 
 void ViPERDDC::SetSamplingRate(const uint32_t sampling_rate) noexcept {
@@ -102,22 +126,17 @@ void ViPERDDC::SetSamplingRate(const uint32_t sampling_rate) noexcept {
 }
 
 void ViPERDDC::ReleaseResources() noexcept {
-    set_coeffs_ok_ = false;
-    coeffs_arr44100_.clear();
-    coeffs_arr48000_.clear();
-    x1_l_.clear(); x1_r_.clear();
-    x2_l_.clear(); x2_r_.clear();
-    y1_l_.clear(); y1_r_.clear();
-    y2_l_.clear(); y2_r_.clear();
+    SetCoeffs(0, nullptr, nullptr);
 }
 
 void ViPERDDC::ProcessPlanar(std::span<float> L, std::span<float> R) noexcept {
     if (!IsEnabled() || L.empty()) return;
+    ConsumeCoeffsSwap();
     if (!set_coeffs_ok_ || arr_size_ == 0) return;
 
     const std::vector<std::array<float, 5>> *coeffs_arr = nullptr;
-    if      (sampling_rate_ == 44100u) coeffs_arr = &coeffs_arr44100_;
-    else if (sampling_rate_ == 48000u) coeffs_arr = &coeffs_arr48000_;
+    if      (sampling_rate_ == 44100u) coeffs_arr = &active_coeffs_->coeffs_44100;
+    else if (sampling_rate_ == 48000u) coeffs_arr = &active_coeffs_->coeffs_48000;
     else return;
 
     for (size_t f = 0; f < L.size(); ++f) {

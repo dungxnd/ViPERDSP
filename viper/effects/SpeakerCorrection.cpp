@@ -45,7 +45,13 @@ void SpeakerCorrection::Reset() noexcept {
     RefreshBandPass();
 }
 
+void SpeakerCorrection::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+}
+
 void SpeakerCorrection::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;

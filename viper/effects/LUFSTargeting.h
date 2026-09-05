@@ -1,11 +1,14 @@
 #pragma once
 
+#include "../include/ViPERParams.h"
 #include <array>
 #include <cstdint>
 #include <span>
 
 class LUFSTargeting {
 public:
+    using Config = viper::LufsParams;
+
     LUFSTargeting();
 
     void Process(std::span<float> samples) noexcept;
@@ -15,7 +18,9 @@ public:
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
 
     void SetEnable(bool enable) noexcept;
     void SetTargetLUFS(float value) noexcept;
@@ -58,6 +63,7 @@ private:
         }
     };
 
+    Config   config_{};
     bool     enable_{false};
     int      speed_{1};
     uint32_t sampling_rate_{44100u};

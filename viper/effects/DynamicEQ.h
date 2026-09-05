@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../include/ViPERParams.h"
 #include <array>
 #include <cstdint>
 #include <mdspan>
@@ -7,6 +8,8 @@
 
 class DynamicEQ {
 public:
+    using Config = viper::DynamicEqParams;
+
     static constexpr uint32_t kMaxBands      = 10u;
     static constexpr uint32_t kControlPeriod = 16u; // Sub-block control rate (samples)
 
@@ -19,7 +22,9 @@ public:
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
 
     void SetEnable(bool enable) noexcept;
     void SetBandCount(uint32_t count) noexcept;
@@ -82,6 +87,7 @@ private:
         float current_gain_db{0.0f};
     };
 
+    Config   config_{};
     bool     enable_{false};
     uint32_t sampling_rate_{44100u};
     uint32_t band_count_{0u};

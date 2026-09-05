@@ -3,18 +3,25 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../utils/MultiBiquad.h"
 #include <array>
 #include <cstdint>
 
 class DiffSurround {
 public:
+    using Config = viper::DiffSurroundParams;
+
     DiffSurround();
 
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
+    void Process(float* samples, uint32_t size) noexcept;
     void Reset();
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
+
     void SetEnable(bool enable);
     void SetDelayTime(float value);
     void SetReverse(bool value);
@@ -23,6 +30,7 @@ public:
     void SetSamplingRate(uint32_t sampling_rate);
 
 private:
+    Config config_{};
     // Zero-copy power-of-two ring delay line — O(1) read/write, no memmove.
     struct RingDelay {
         static constexpr uint32_t kCap  = 8192u;

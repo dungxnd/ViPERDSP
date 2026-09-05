@@ -31,7 +31,7 @@ void PConvNUPC::ReleaseResources() noexcept {
         }
 #if VIPER_USE_FP16_TAIL
         for (__fp16* p : s.filter_spectra_fp16) {
-            if (p) { ::free(p); }
+            if (p) { pffft_aligned_free(p); }
         }
         s.filter_spectra_fp16.clear();
 #endif
@@ -315,9 +315,17 @@ bool PConvNUPC::LoadKernel(const std::span<const float> kernel,
                 __fp16* buf = static_cast<__fp16*>(
                     pffft_aligned_malloc(fft_size * sizeof(__fp16)));
                 if (!buf) {
-                    // FP16 allocation failure: fall back to FP32 silently.
+                    for (__fp16* allocated : s.filter_spectra_fp16) {
+                        if (allocated) pffft_aligned_free(allocated);
+                    }
                     s.filter_spectra_fp16.clear();
-                    break;
+                    pffft_aligned_free(s.fft_in);
+                    pffft_aligned_free(s.fft_out);
+                    pffft_aligned_free(s.fft_work);
+                    pffft_aligned_free(s.accum_spectrum);
+                    PFFFTRegistry::Instance().Release(s.fft_setup);
+                    ReleaseResources();
+                    return false;
                 }
                 const float* src = s.filter_spectra[p];
                 __fp16*      dst = buf;

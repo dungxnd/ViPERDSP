@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../include/ViPERParams.h"
 #include "../utils/MinPhaseIIRCoeffs.h"
 #include <array>
 #include <cstdint>
@@ -8,6 +9,8 @@
 
 class IIRFilter {
 public:
+    using Config = viper::EqualizerParams;
+
     static constexpr uint32_t kMaxBands = 31u;
 
     explicit IIRFilter(uint32_t bands = 10);
@@ -24,7 +27,9 @@ public:
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
 
     void SetEnable(bool enable) noexcept;
     void SetBandCount(uint32_t bands);
@@ -52,6 +57,7 @@ private:
 
     static constexpr float kDefaultLevelQ = 0.636f;
 
+    Config   config_{};
     bool     enable_{false};
     bool     gains_dirty_{false};  // true while target != current; clears on convergence
     uint32_t bands_{0};

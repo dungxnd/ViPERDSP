@@ -3,11 +3,14 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../dsp/LinkwitzRileyCrossover.h"
 #include <array>
 #include <cstdint>
 class StereoImager {
 public:
+    using Config = viper::StereoImagerParams;
+
     static constexpr uint32_t kNumBands      = 3;
     static constexpr uint32_t kNumCrossovers = 2;
 
@@ -16,7 +19,10 @@ public:
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
+
     void SetEnable(bool enable) noexcept;
     void SetLowWidth(float value) noexcept;
     void SetMidWidth(float value) noexcept;
@@ -24,10 +30,11 @@ public:
     void SetLowCrossover(float value) noexcept;
     void SetHighCrossover(float value) noexcept;
     void SetSamplingRate(uint32_t sampling_rate) noexcept;
-
-private:
     void Process(float *samples, uint32_t size) noexcept;
 
+private:
+
+    Config config_{};
     bool enable_{false};
 
     uint32_t sampling_rate_{44100u};

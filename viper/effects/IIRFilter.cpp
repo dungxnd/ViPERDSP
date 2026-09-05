@@ -84,7 +84,17 @@ void IIRFilter::Reset() noexcept {
     fade_in_gain_  = 0.0f;
 }
 
+void IIRFilter::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetBandCount(config.band_count);
+    for (uint32_t i = 0; i < config.band_count && i < config.band_levels.size(); i++) {
+        SetBandLevel(i, config.band_levels[i]);
+    }
+}
+
 void IIRFilter::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;

@@ -3,6 +3,7 @@
 #include <span>
 
 
+#include "../include/ViPERParams.h"
 #include "../utils/Harmonic.h"
 #include "../utils/MultiBiquad.h"
 #include <array>
@@ -10,12 +11,17 @@
 
 class PsychoacousticBass {
 public:
+    using Config = viper::PsychoacousticBassParams;
+
     PsychoacousticBass();
 
     void ProcessPlanar(std::span<float> L, std::span<float> R) noexcept;
     void Reset() noexcept;
 
-    [[nodiscard]] bool IsEnabled() const noexcept { return enable_; }
+    [[nodiscard]] bool IsEnabled() const noexcept { return config_.enable; }
+    void SetConfig(const Config& config) noexcept;
+    [[nodiscard]] const Config& GetConfig() const noexcept { return config_; }
+
     void SetEnable(bool enable) noexcept;
     void SetCutoff(uint32_t value) noexcept;
     void SetIntensity(uint32_t value) noexcept;
@@ -26,6 +32,7 @@ public:
 private:
     void Process(float* samples, uint32_t size) noexcept;
 
+    Config   config_{};
     bool     enable_{false};
     uint32_t sampling_rate_{44100};
     uint32_t cutoff_{80};

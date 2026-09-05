@@ -30,8 +30,9 @@ void SpectrumExtend::Reset() noexcept {
     for (auto& f : highpass_) f.Reset();
     for (auto& f : lowpass_)  f.Reset();
 
-    const auto freq  = static_cast<float>(reference_freq_);
-    const auto nyq   = static_cast<float>(sampling_rate_) / 2.0f - 2000.0f;
+    const float max_cutoff = 0.45f * static_cast<float>(sampling_rate_);
+    const auto freq  = std::clamp(static_cast<float>(reference_freq_), 20.0f, max_cutoff);
+    const auto nyq   = std::clamp(static_cast<float>(sampling_rate_) * 0.5f - 2000.0f, 20.0f, max_cutoff);
 
     for (auto& f : highpass_) {
         f.RefreshFilter(MultiBiquad::FilterType::HighPass,
@@ -48,7 +49,15 @@ void SpectrumExtend::Reset() noexcept {
     }
 }
 
+void SpectrumExtend::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetReferenceFrequency(config.strength);
+    SetExciter(config.exciter);
+}
+
 void SpectrumExtend::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;

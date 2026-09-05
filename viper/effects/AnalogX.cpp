@@ -78,12 +78,20 @@ void AnalogX::Reset() {
     for (auto& h : harmonic_) {
         h.SetHarmonics(kAnalogXHarmonics);
     }
+    const double safe_cutoff = std::clamp(static_cast<double>(m.cutoff), 20.0, 0.45 * sampling_rate_);
     for (auto& f : low_pass_) {
-        f.RefreshFilter(FT::LowPass, {.frequency = static_cast<double>(m.cutoff), .sample_rate = sampling_rate_, .q_factor = 0.717});
+        f.RefreshFilter(FT::LowPass, {.frequency = safe_cutoff, .sample_rate = sampling_rate_, .q_factor = 0.717});
     }
 }
 
+void AnalogX::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetProcessingModel(config.mode);
+}
+
 void AnalogX::SetEnable(const bool enable) {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (!enable_) {
             Reset();

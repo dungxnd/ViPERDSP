@@ -20,7 +20,18 @@ void Reverberation::Reset() noexcept {
     model_.Reset();
 }
 
+void Reverberation::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetRoomSize(config.room_size);
+    SetWidth(config.width);
+    SetDamp(config.damp);
+    SetWet(config.wet);
+    SetDry(config.dry);
+}
+
 void Reverberation::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (!enable_) Reset();  // reset when transitioning from disabled -> enabled
         enable_ = enable;

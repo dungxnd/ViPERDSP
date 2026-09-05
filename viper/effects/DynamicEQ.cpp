@@ -198,7 +198,24 @@ void DynamicEQ::Reset() noexcept {
     }
 }
 
+void DynamicEQ::SetConfig(const Config& config) noexcept {
+    config_ = config;
+    SetEnable(config.enable);
+    SetBandCount(config.band_count);
+    for (uint32_t i = 0; i < config.band_count && i < config.bands.size(); i++) {
+        const auto &b = config.bands[i];
+        SetBandFrequency(i, b.frequency);
+        SetBandQ(i, b.q);
+        SetBandGain(i, b.gain);
+        SetBandThreshold(i, b.threshold);
+        SetBandAttack(i, b.attack);
+        SetBandRelease(i, b.release);
+        SetBandFilterType(i, b.filter_type);
+    }
+}
+
 void DynamicEQ::SetEnable(const bool enable) noexcept {
+    config_.enable = enable;
     if (enable_ != enable) {
         if (enable) Reset();
         enable_ = enable;
